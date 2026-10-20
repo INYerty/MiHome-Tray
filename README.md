@@ -77,7 +77,7 @@ py -3.12 -m venv .venv
 ## Contributors
 
 - [INYerty](https://github.com/INYerty)：项目发起、需求设计与维护。
-- **Codex（OpenAI）**：AI 开发协助，包括设备接入研究、托盘控制、毛玻璃界面、问题修复、测试与安装包制作。
+- **[Codex（OpenAI）](https://github.com/codex)**：AI 开发协助，包括设备接入研究、托盘控制、毛玻璃界面、问题修复、测试与安装包制作；相关提交使用 Codex 署名标识 AI 贡献。
 - [huanyuejue](https://github.com/huanyuejue)：MiHome-Windows 上游项目作者。
 
 ## 来源与许可
