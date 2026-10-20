@@ -74,6 +74,12 @@ py -3.12 -m venv .venv
 
 构建流程会检查真实 EXE 的离线启动；发布前另外验证安装、安装后启动和卸载。效果图可用 `python -m tests.screenshot_demo` 启动隔离演示窗口后截图。
 
+## Contributors
+
+- [INYerty](https://github.com/INYerty)：项目发起、需求设计与维护。
+- **Codex（OpenAI）**：AI 开发协助，包括设备接入研究、托盘控制、毛玻璃界面、问题修复、测试与安装包制作。
+- [huanyuejue](https://github.com/huanyuejue)：MiHome-Windows 上游项目作者。
+
 ## 来源与许可
 
 本项目是 [huanyuejue/MiHome-Windows](https://github.com/huanyuejue/MiHome-Windows) 的派生版本，上游基线为 `22655b8d0df07da44772833fbd33f696c0629b17`，保留原作者版权、历史和 [GPL-3.0-or-later 许可证](LICENSE)。[上游原始说明](docs/UPSTREAM_README.md) 另行保留。
