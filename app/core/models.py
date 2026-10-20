@@ -42,6 +42,8 @@ class PropInfo:
     writable: bool
     range: tuple | None = None  # (min, max, step)
     value_list: list | None = None
+    semantic_name: str = ""
+    service_name: str = ""
 
 
 @dataclass

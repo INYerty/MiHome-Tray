@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from app.siui.components.slider_ import SiSlider
+from app.ui.smooth_slider import SmoothSlider
 
 from app.core.models import PropInfo
 from app.ui.power_button import PowerButton
@@ -146,7 +146,7 @@ def _value_label() -> QLabel:
     return label
 
 
-class _NoWheelSlider(SiSlider):
+class _NoWheelSlider(SmoothSlider):
     """禁用滚轮调节的滑块：滚轮事件穿透给页面滚动；拇指用 THUMB 调色板色。"""
 
     def wheelEvent(self, event) -> None:  # noqa: N802 (Qt 命名约定)
@@ -157,19 +157,6 @@ def _make_slider() -> _NoWheelSlider:
     slider = _NoWheelSlider()
     slider.setOrientation(Qt.Horizontal)
     slider.setRange(0, 100)
-    slider.style_data.track_color = QColor(SiColors.THEME)
-    # 拇指用主文字色：深色模式近白、浅色模式近黑，两种卡片上都可见
-    # 拇指恒色：悬停不变色，详情页与工作台共用同一套观感
-    slider.style_data.thumb_idle_color = QColor(SiColors.THUMB)
-    slider.style_data.thumb_hover_color = QColor(SiColors.THUMB)
-    slider.style_data.background_color = QColor(SiColors.SURFACE)
-    # 圆形拇指：宽高相等 + 圆角由组件内部按半宽绘制
-    slider.style_data.thumb_width = 18
-    slider.style_data.thumb_height = 18
-    # siui 在构造时把绘制用的 _thumb_color 从 style_data 快照，
-    # 构造后改 style_data 不会回写，需手动设一次初始拇指色
-    slider.thumbColor = QColor(SiColors.THUMB)
-    slider.update()
     return slider
 
 
@@ -288,6 +275,7 @@ class SliderSection(QFrame):
         self.setObjectName("propCard")
         self.setAttribute(Qt.WA_StyledBackground, True)
         low, high, step = prop.range
+        self._low, self._step = low, step or 1
         self._decimals = 0 if prop.type != "float" else _decimals_of(step)
 
         title_row = QHBoxLayout()
@@ -301,10 +289,11 @@ class SliderSection(QFrame):
         title_host.setLayout(title_row)
 
         self._slider = _make_slider()
-        self._slider.setRange(int(low), int(high))
+        self._slider.setRange(0, round((high - low) / self._step))
+        self._slider.setPageStep(max(1, self._slider.maximum() // 10))
         # 拖动过程只预览，松手才下发，避免一次拖动连发几十条指令
         self._slider.valueChanged.connect(self._on_preview)
-        self._slider.sliderReleased.connect(self._commit)
+        self._slider.committed.connect(self._commit)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 16, 24, 22)
@@ -315,10 +304,14 @@ class SliderSection(QFrame):
         self._update_value_text(low)
 
     def _on_preview(self, value: int) -> None:
-        self._update_value_text(value)
+        self._update_value_text(self._value_for(value))
+
+    def _value_for(self, index):
+        value = round(self._low + index * self._step, 6)
+        return float(value) if self.prop.type in ("float", "double") else int(value)
 
     def _commit(self) -> None:
-        self._write(self._slider.value())
+        self._write(self._value_for(self._slider.value()))
 
     def _update_value_text(self, value: Any) -> None:
         if self._decimals:
@@ -327,12 +320,11 @@ class SliderSection(QFrame):
             self._value_label.setText(str(value))
 
     def refresh_value(self, value: Any) -> None:
-        # blockSignals 会同时挡掉 siui 内部的进度动画同步，
-        # 因此设值后手动调用其内部回调让轨道视觉跟随真实值
+        if value is None or self._slider.isSliderDown():
+            return
         self._slider.blockSignals(True)
         try:
-            self._slider.setValue(int(value))
-            self._slider._onValueChanged(int(value))
+            self._slider.setValue(round((value - self._low) / self._step))
         finally:
             self._slider.blockSignals(False)
         self._update_value_text(value)

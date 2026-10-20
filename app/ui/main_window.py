@@ -50,6 +50,7 @@ from app.ui.toast import Toast
 from app.ui.tray import TrayController, TrayManagerDialog
 from app.ui.voice_fab import VoiceFab
 from app.ui.settings_dialog import SettingsDialog
+from app.ui.glass import prepare_glass, apply_glass, tint
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +100,11 @@ class MainWindow(QMainWindow):
 
         from app import resource_path
         self.setWindowIcon(QIcon(str(resource_path("app/ui/icon.png"))))
-        self.setWindowTitle("米家 - MiHome for Windows")
+        self.setWindowTitle("米家快捷控制 - MiHome Tray")
         # 保持原生窗口框架，通过拦截 WM_NCCALCSIZE 抹掉系统标题栏区域：
         # 拖动/双击最大化/最小化动画/Aero Snap/边缘缩放全部由系统原生处理
         self.setWindowFlags(Qt.Window)
+        prepare_glass(self)
         # 默认窗口尺寸在首次显示时按真实 DPR 应用（见 showEvent）：
         # 构造期窗口未创建，DPR 读数不可靠（曾导致默认尺寸放大一圈）
         self._default_size_applied = False
@@ -126,6 +128,7 @@ class MainWindow(QMainWindow):
         self._update_check_done = False
         # 轮询防重入：上一轮批量读取未返回时跳过本轮定时触发
         self._poll_in_flight = False
+        self._presence_in_flight = False
         # 网格重排防抖：拖动窗口会触发密集 resizeEvent，全部重建
         # 卡片代价太高，等布局稳定且列数变化时才重建
         self._grid_columns = 0
@@ -157,6 +160,9 @@ class MainWindow(QMainWindow):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(_POLL_INTERVAL_MS)
         self._poll_timer.timeout.connect(self._on_poll_tick)
+        self._presence_timer = QTimer(self)
+        self._presence_timer.setInterval(30_000)
+        self._presence_timer.timeout.connect(self._refresh_presence)
         self._metrics_timer = QTimer(self)
         self._metrics_timer.setInterval(_METRICS_INTERVAL_MS)
         self._metrics_timer.timeout.connect(self._refresh_metrics)
@@ -233,7 +239,7 @@ class MainWindow(QMainWindow):
         btn_wrapper = QWidget()
         btn_wrapper.setStyleSheet("background: transparent;")
         btn_layout = QHBoxLayout(btn_wrapper)
-        btn_layout.setContentsMargins(0, 30, 25, 0)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.addWidget(self._more_btn)
         top_bar.addWidget(btn_wrapper)
         content.addLayout(top_bar)
@@ -270,6 +276,7 @@ class MainWindow(QMainWindow):
         root.addLayout(body)
 
         container = QWidget()
+        container.setObjectName("glassSurface")
         container.setLayout(root)
         self.setCentralWidget(container)
 
@@ -297,6 +304,12 @@ class MainWindow(QMainWindow):
         """
         self._count_label.setStyleSheet(
             f"color: {SiColors.TEXT_MUTED}; background: transparent;")
+        self.centralWidget().setStyleSheet(
+            f"QWidget#glassSurface {{ background: {tint(SiColors.WINDOW_BG, 55)}; border-radius: 20px; }}"
+            "QWidget#contentHost, QWidget#gridHost, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }"
+            "QFrame#titleBar { background: transparent; border: none; }")
+        if self.isVisible():
+            apply_glass(self)
         self._more_menu.setStyleSheet(
             f"QMenu {{ background: {SiColors.CARD}; border: 1px solid {SiColors.BTN_HOVER}; border-radius: 8px; padding: 4px; }}"
             f"QMenu::item {{ color: {SiColors.TEXT_PRIMARY}; padding: 6px 24px 6px 12px; border-radius: 4px; }}"
@@ -526,6 +539,7 @@ class MainWindow(QMainWindow):
             self._startup_load()
         else:
             QMessageBox.information(self, "未登录", "未完成扫码登录，程序即将退出。")
+            self.request_force_quit()
             self.close()
 
     def _startup_load(self) -> None:
@@ -535,6 +549,7 @@ class MainWindow(QMainWindow):
         可用的界面与上次读数，新值拿到后覆盖。
         """
         self._poll_timer.start()
+        self._presence_timer.start()
         self._metrics_timer.start()
         cached = device_cache.load()
         if cached is None:
@@ -543,8 +558,47 @@ class MainWindow(QMainWindow):
         devices, known_power, metrics = cached
         self._known_power.update(known_power)
         self._metrics.update(metrics)
-        self._show_status("已从本地缓存加载，点击右上角菜单刷新可同步最新设备")
+        self._show_status("已显示上次缓存，正在同步设备在线状态…")
         self._apply_devices(devices)
+        self.load_devices()
+
+    def _refresh_presence(self) -> None:
+        """Refresh cloud presence even for devices marked offline in the last list."""
+        if self._presence_in_flight or self._loading_devices or not self._all_devices:
+            return
+        self._presence_in_flight = True
+        self._jobs.submit(self._service.list_devices,
+                          on_success=self._presence_done, on_error=self._presence_failed)
+
+    def _presence_failed(self, error) -> None:
+        self._presence_in_flight = False
+        logger.warning("刷新在线状态失败: %s", error)
+        if self._tray is not None:
+            self._tray._controls.presence_failed()
+
+    def _presence_done(self, devices) -> None:
+        self._presence_in_flight = False
+        if self._tray is not None:
+            self._tray.confirm_presence(devices)
+        old = {d.did: d for d in self._all_devices}
+        changed = set(old) != {d.did for d in devices}
+        for dev in devices:
+            previous = old.get(dev.did)
+            if previous is not None:
+                changed |= (previous.online, previous.name, previous.home_name, previous.room_name, previous.model, previous.spec_type) != (dev.online, dev.name, dev.home_name, dev.room_name, dev.model, dev.spec_type)
+        if changed:
+            current_home, current_room = self._current_home, self._current_room
+            self._all_devices = devices
+            self._homes = [_ALL_HOMES] + sorted({d.home_name for d in devices})
+            self._current_home = current_home if current_home in self._homes else _ALL_HOMES
+            self._current_room = current_room if current_room in {_ALL_ROOMS, _SCENE_TAB, *(d.room_name for d in devices)} else _ALL_ROOMS
+            self._home_btn.setText(f"{self._current_home} ▾")
+            self._rebuild_tabs()
+            self._rebuild_grid()
+            self._update_count_label()
+            device_cache.save(devices, self._known_power, self._metrics)
+        self._update_tray_devices()
+        self._refresh_power_states(force=True)
 
     def load_devices(self) -> None:
         if self._loading_devices:
@@ -561,6 +615,8 @@ class MainWindow(QMainWindow):
 
     def _on_devices_loaded(self, devices: list[DeviceInfo]) -> None:
         self._loading_devices = False
+        if self._tray is not None:
+            self._tray.confirm_presence(devices)
         self._refresh_action.setEnabled(True)
         self._refresh_action.setText("刷新")
         # 对比要在替换前做：added/removed 以旧列表为基准
@@ -898,19 +954,22 @@ class MainWindow(QMainWindow):
         force=True 忽略记忆全量重读（定时轮询）。
         离线设备的云端返回值是最后一次在线时的缓存，不可信，跳过。
         """
+        if self._poll_in_flight:
+            return
         # 以 DeviceInfo.online 为准：离线设备的云端开关值不可信
-        dids = [d.did for d in self._visible_devices() if d.online]
+        from app.core import tray_store
+        favorites = set(tray_store.load())
+        visible = {d.did for d in self._visible_devices()}
+        dids = [d.did for d in self._all_devices if d.online and
+                (d.did in visible or d.did in favorites)]
         if not dids:
             return
         if not force:
             dids = [d for d in dids if d not in self._known_power]
             if not dids:
                 return
-        else:
-            # 轮询仅针对已确认有开关能力的设备，避免无开关设备无效请求
-            dids = [d for d in dids if self._known_power.get(d) is not None]
-            if not dids:
-                return
+        # None may mean a transient read failure, not absence of a switch.
+        # Retry on the next tick instead of permanently excluding the device.
         self._poll_in_flight = True
         self._jobs.submit(
             lambda: self._service.power_states(dids),
@@ -1236,6 +1295,7 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt 命名约定)
         super().showEvent(event)
+        apply_glass(self)
         # 首次显示：应用默认窗口尺寸（宽度按逻辑像素取首屏一排 5 个
         # 卡片所需值，高度按 1200 物理像素折算），并居中于所在屏幕的
         # 可用区域。首次启动时 DPR 读数不可靠（曾导致尺寸异常），故

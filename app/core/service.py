@@ -34,6 +34,7 @@ from mijiaAPI.miutils import generate_enc_params, gen_nonce, get_signed_nonce
 
 from . import icon_store, spec_zh
 from .models import ActionInfo, DeviceDetail, DeviceInfo, PropInfo, SceneInfo
+from .secure_api import SecureMijiaAPI
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,7 @@ def _wrap_error(exc: Exception, context: str) -> ServiceError:
 
 class MijiaService:
     def __init__(self):
-        # 认证文件沿用上游默认位置 ~/.config/mijia-api/auth.json，
-        # 这样 CLI 里扫过的码在 GUI 直接生效，反之亦然
+        # 专用登录凭据由 DPAPI 加密，不复用 CLI 的明文账号文件。
         self._api = self._init_api()
         self._device_cache: dict[str, mijiaDevice] = {}
         # did -> (model, spec_type, name) 索引，批量读状态与共享设备组装时
@@ -65,6 +65,7 @@ class MijiaService:
         self._device_index: dict[str, tuple[str, str, str]] = {}
         # spec_type -> spec 内存缓存，轮询命中后不再读文件/打网络
         self._spec_cache: dict[str, dict | None] = {}
+        self._property_context_cache: dict[str, dict] = {}
         # spec 产品名缓存就绪后的产品页中文名缓存：
         # model -> 中文名或 None（已确认无中文名，不再重查）
         self._product_page_names: dict[str, str | None] = {}
@@ -75,23 +76,8 @@ class MijiaService:
         self._home_ids: dict[str, str] | None = None
 
     def _init_api(self) -> mijiaAPI:
-        """构造上游客户端；认证文件损坏时隔离坏文件并降级为未登录。
-
-        上游构造函数同步读取并解析 auth.json 且写入非原子，进程被杀
-        可能留下半截文件；不在这里接住，异常会穿透到 QApplication
-        之前，用户只会看到进程无声退出。
-        """
-        try:
-            return mijiaAPI()
-        except (json.JSONDecodeError, KeyError, TypeError, OSError) as exc:
-            auth_path = Path.home() / ".config" / "mijia-api" / "auth.json"
-            try:
-                auth_path.replace(auth_path.with_name("auth.json.corrupt"))
-            except OSError:
-                pass
-            logger.warning("认证文件损坏已隔离为 auth.json.corrupt，请重新扫码登录: %s", exc)
-            # 文件已移除，上游按「无认证文件」处理，available 恒为 False
-            return mijiaAPI()
+        """Keep this app's login separate and encrypted for the Windows user."""
+        return SecureMijiaAPI()
 
     @staticmethod
     def api_version() -> str:
@@ -156,6 +142,11 @@ class MijiaService:
         result = []
         for d in devices:
             did = str(d["did"])
+            entry = (d.get("model", ""), d.get("spec_type") or "", d.get("name", ""))
+            previous = self._device_index.get(did)
+            if previous and previous[:2] != entry[:2]:
+                self._device_cache.pop(did, None)
+            self._device_index[did] = entry
             home_name, room_name = location.get(did, ("未知", "未知"))
             result.append(DeviceInfo(
                 did=did,
@@ -173,6 +164,7 @@ class MijiaService:
 
     def device_detail(self, did: str) -> DeviceDetail:
         dev = self._get_device(did)
+        context = self._property_context(did)
         # prop_list 对属性名里的 '-' 额外注册了一份 '_' 别名键，
         # 两者指向同一对象，按对象身份去重避免面板出现重复控件
         seen: set[int] = set()
@@ -181,6 +173,8 @@ class MijiaService:
             if id(prop) in seen:
                 continue
             seen.add(id(prop))
+            semantic, service_name = context.get(
+                (prop.method.get("siid"), prop.method.get("piid")), ("", ""))
             props.append(PropInfo(
                 name=prop.name,
                 desc=prop.desc or prop.name,
@@ -189,6 +183,8 @@ class MijiaService:
                 writable="w" in prop.rw,
                 range=tuple(prop.range) if prop.range else None,
                 value_list=prop.value_list,
+                semantic_name=semantic,
+                service_name=service_name,
             ))
         actions = [
             ActionInfo(name=a.name, desc=a.desc or a.name)
@@ -196,6 +192,37 @@ class MijiaService:
         ]
         return DeviceDetail(did=dev.did, name=dev.name, model=dev.model,
                             props=props, actions=actions)
+
+    def _property_context(self, did: str) -> dict:
+        """Retain service semantics lost by upstream's flattened property list.
+
+        E.g. dmaker.fan.p8 has both fan/on and indicator-light/on. A numeric
+        suffix in a flattened name cannot by itself identify the power switch.
+        """
+        spec_type = self._device_index.get(did, ("", "", ""))[1]
+        return self._context_for_spec(spec_type)
+
+    def _context_for_spec(self, spec_type: str) -> dict:
+        if not spec_type:
+            return {}
+        if spec_type in self._property_context_cache:
+            return self._property_context_cache[spec_type]
+        import requests
+        try:
+            response = requests.get("https://miot-spec.org/miot-spec-v2/instance",
+                                    params={"type": spec_type}, timeout=(5, 12))
+            response.raise_for_status()
+            result = {}
+            for service in response.json()["services"]:
+                service_name = service["type"].split(":")[3]
+                for prop in service.get("properties", []):
+                    result[(service["iid"], prop["iid"])] = (
+                        prop["type"].split(":")[3], service_name)
+            self._property_context_cache[spec_type] = result
+            return result
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as exc:
+            logger.warning("加载设备功能语义失败，可稍后刷新: %s", exc)
+            return {}
 
     def read_prop(self, did: str, name: str):
         dev = self._get_device(did)
@@ -383,7 +410,13 @@ class MijiaService:
             raise ServiceError("设备不支持开关控制或已离线")
         new_state = not current
         self.set_power_state(did, new_state)
-        return new_state
+        # The write response acknowledges a command; only readback confirms state.
+        import time
+        for delay in (0.5, 1.0, 1.5):
+            time.sleep(delay)
+            if self.power_state(did) == new_state:
+                return new_state
+        raise ServiceError("指令已发送，但未确认生效；请刷新设备状态")
 
     def set_power_state(self, did: str, state: bool) -> None:
         """写入开关状态：spec method 直接构造批量写请求。
@@ -471,16 +504,28 @@ class MijiaService:
         # 部分品类（音箱、温湿度计等）官方数据缺中文 comment，
         # 按属性/动作名兜底补齐，避免界面退化为纯英文（见 spec_zh）
         spec_zh.apply_fallback(info)
+        context = self._context_for_spec(spec_type)
+        for prop in info.get("properties", []):
+            method = prop.get("method", {})
+            semantic, service = context.get((method.get("siid"), method.get("piid")), ("", ""))
+            prop["semantic_name"] = semantic
+            prop["service_name"] = service
         return info
 
     @staticmethod
     def _find_on_method(info: dict) -> dict | None:
-        for prop in info.get("properties", []):
-            if prop.get("type") == "bool" and "w" in prop.get("rw", "") and (
-                prop["name"] == "on"
-                or prop["name"].replace("_", "-").startswith("on-")
-            ):
-                return prop["method"]
+        candidates = [p for p in info.get("properties", [])
+                      if p.get("type") == "bool" and "w" in p.get("rw", "")
+                      and (p.get("semantic_name") == "on" or p["name"] == "on"
+                           or p["name"].replace("_", "-").startswith("on-"))]
+        primary = [p for p in candidates if p.get("service_name") in ("fan", "light")]
+        if len(primary) == 1:
+            return primary[0]["method"]
+        # Flattened names can identify multiple unrelated switches. Without
+        # service context, refuse an ambiguous control rather than toggle an LED.
+        if len(candidates) == 1 and candidates[0].get("service_name") not in (
+                "indicator-light", "alarm", "physical-controls-locked"):
+            return candidates[0]["method"]
         return None
 
     # ---------- 环境读数（卡片副标题展示用） ----------

@@ -25,8 +25,8 @@ _DEFAULTS: dict = {
     "show_scene_tab": True,  # 主页选项卡最左侧显示「场景」入口（手动场景一键执行）
     "default_speaker_did": "",  # 小爱指令默认输出音箱；空串=自动（第一个在线）
     "ui_scale": 1.0,    # 界面缩放个人微调乘数（叠加在软件基准缩放之上），需重启生效
-    "tray_columns": 2,  # 托盘快捷窗口卡片列数：1 或 2
-    "check_update_enabled": True,  # 启动时自动检查 GitHub 新版本
+    "tray_columns": 1,  # 灯/风扇的完整快捷控件默认单列
+    "check_update_enabled": False,  # 本地派生版本不提示用上游发行包覆盖
 }
 
 

@@ -10,10 +10,18 @@ import os
 import sys
 import tempfile
 
+from app.core.bootstrap import ensure_gui_streams
+
+ensure_gui_streams()
+
 from PySide6.QtCore import QLockFile, QTimer, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
+
+from app.core.diagnostics import install_runtime_diagnostics
+
+install_runtime_diagnostics()
 
 from app import __version__
 from app.ui.main_window import MainWindow
@@ -64,6 +72,26 @@ def main() -> int:
     from app.ui.theme_service import apply_theme
     # apply_theme 内部已设置全局 QSS，无需重复应用
     apply_theme(get_theme_mode())
+
+    if "--self-test" in sys.argv:
+        # Offline packaged-startup diagnostic. Never runs login/device requests.
+        import json
+        from pathlib import Path
+        from PySide6.QtGui import QIcon
+        from app import resource_path
+        window = MainWindow()
+        assert window._tray is not None, "Tray controller failed to initialize"
+        assert not QIcon(str(resource_path("app/ui/icon.png"))).isNull(), "Missing icon resource"
+        assert window._tray._quick._registry is window._tray._controls
+        result = {"version": __version__, "qt_window_created": True,
+                  "tray_controller_created": True, "icons_loaded": True,
+                  "network_requests": 0}
+        output = os.environ.get("MIHOME_SELF_TEST_OUTPUT")
+        if output:
+            Path(output).write_text(json.dumps(result, indent=2), encoding="utf-8")
+        window.request_force_quit()
+        QTimer.singleShot(50, window.close)
+        return app.exec()
 
     # 单实例：仅允许一个进程，二次启动唤起已有窗口。
     # 自重启（MIHOME_RESTARTED=1）时跳过：旧进程即将退出，

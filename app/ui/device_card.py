@@ -28,6 +28,7 @@ from app.siui.components.container import SiRowCard
 from app.core.models import DeviceInfo
 from app.ui.power_button import PowerButton
 from app.ui.si_theme import SiColors
+from app.ui.glass import card_color
 
 _POWER_BTN_SIZE = 36
 _ICON_SIZE = 36
@@ -50,9 +51,8 @@ class DeviceCard(SiRowCard):
         self._hovered = False
         self._online = device.online
 
-        self.style_data.background_color = QColor(
-            SiColors.OFFLINE_CARD if not self._online else SiColors.CARD)
-        self.style_data.border_radius = 14.0
+        self.style_data.background_color = QColor(SiColors.OFFLINE_CARD) if not self._online else card_color()
+        self.style_data.border_radius = 20.0
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         # 固定尺寸：宽度固定，窗口缩放仅改变列数，卡片本身不被拉伸
         self.setFixedSize(_CARD_FIXED_WIDTH, _CARD_FIXED_HEIGHT)
@@ -164,9 +164,7 @@ class DeviceCard(SiRowCard):
             # 离线卡片整体灰置，hover 不提亮（无交互暗示）
             self.style_data.background_color = QColor(SiColors.OFFLINE_CARD)
         else:
-            self.style_data.background_color = QColor(
-                SiColors.CARD_HOVER if self._hovered else SiColors.CARD
-            )
+            self.style_data.background_color = card_color(self._hovered)
         self.update()
 
     # ---------- 交互 ----------

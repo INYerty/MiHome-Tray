@@ -36,6 +36,11 @@ desktop.ini
 # ---- 项目特定：认证与缓存 ----
 # 扫码登录后的认证文件包含账号凭据，绝不提交
 auth.json
+*.dpapi
+account.tmp
+.unused-account-path
+artifacts/
+!README.local.md
 
 # 本地设备缓存（包含设备列表、token 等）
 devices_cache.json

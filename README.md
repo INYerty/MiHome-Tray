@@ -1,198 +1,83 @@
-# MiHome-Windows
+# 米家快捷控制 · MiHome Tray
 
-米家设备的 Windows 桌面控制端。基于 [mijiaAPI](https://github.com/Do1e/mijia-api)
-构建图形界面，扫码登录后即可在本地窗口中查看和控制家里的全部米家设备。
+在 Windows 系统托盘里控制米家设备。点击图标，即可调节挂灯亮度、色温，或控制风扇电源、风速、模式和摇头。
 
-> **注意：当前项目仍处于早期版本。** 作者个人米家设备有限，无法对各类设备做针对性适配测试，因此 UI 和操作逻辑的完善度不算很高。不过基础使用（扫码登录、设备列表与常用控制、托盘、小爱语音等）已无大碍，但需适配更多设备功能则需要社区支持了。
+**[下载安装包](https://github.com/INYerty/MiHome-Tray/releases/latest)** · [反馈问题](https://github.com/INYerty/MiHome-Tray/issues) · [开发说明](README.local.md)
 
-## 功能
+## 效果图
 
-- **扫码登录**：米家 APP 扫二维码，登录凭据与上游依赖的 CLI 共用
-- **设备列表**：按家庭、房间分组，实时显示在线状态，支持隐藏无功能设备
-- **场景执行**：主页「场景」选项卡列出米家 APP 中创建的手动场景，一键执行（可在设置中隐藏该入口）
-- **设备控制**：根据设备 spec 元数据自动生成控件——布尔属性映射开关、数值属性映射滑块（自动套用范围与步长）、枚举属性映射下拉框
-- **动作执行**：设备支持的动作渲染为按钮，执行前二次确认
-- **系统托盘**：最小化到托盘，支持快捷设备控制、场景一键执行、小爱音响快捷控制、小爱语音指令，托盘快捷窗口支持单列/双列卡片切换与设备/场景混排排序
-- **主题配色**：深色 / 浅色 / 跟随系统（设置中切换，米家绿主题色两种模式一致）；托盘图标自动跟随 Windows 任务栏深浅色
-- **界面缩放**：50%–200% 无级调节（叠加在系统缩放之上），需重启生效
-- **开机自启动**：可选，写入当前用户注册表（HKCU Run）
-- **小爱语音**：主界面右下角悬浮按钮，输入文字指令发送给在线小爱音箱，可指定默认输出音箱
-- **版本检测**：启动时自动检查 GitHub Releases 新版本，也可在关于页手动检测
-- **本地缓存**：设置、托盘/工作台配置与设备缓存存放在用户数据目录（详见下方路径说明）
-- **上游可升级**：mijiaAPI 仅作为 PyPI 依赖锁定在 `>=5,<6`，升级后跑 `python -m tests.smoke_test` 即可确认兼容性
+以下为程序实际渲染的界面截图，使用隔离的演示设备，未包含真实账号或家庭数据。毛玻璃采用 Windows 11 Acrylic；效果随窗口后方内容和系统透明度设置变化。
 
-## 运行
+### 托盘快捷面板
 
-要求 Python >= 3.10
+<img src="docs/images/tray-panel.png" alt="毛玻璃托盘面板：挂灯、风扇的常用控制；演示设备" width="396">
 
-### 一键运行
+### 主页面
 
-```powershell
-git clone https://github.com/huanyuejue/MiHome-Windows.git
-cd MiHome-Windows
+![米家快捷控制主页面，演示设备](docs/images/main-window.png)
 
-# 双击 start.bat，或命令行执行：
-start.bat
-```
+## 下载与使用
 
-`start.bat` 自动完成：创建 venv → 安装依赖 → 启动程序，无需手动配置环境。
+1. 打开 [Releases](https://github.com/INYerty/MiHome-Tray/releases/latest)，下载 `MiHome-Tray-Setup-0.3.2-x64.exe`。
+2. 双击安装，随后从开始菜单打开「米家快捷控制」。**无需安装 Python、下载依赖或解压运行目录。**
+3. 用手机米家 App 扫码登录自己的账号。目前面向中国大陆地区账号。
+4. 右键右下角托盘图标 →「管理托盘项目」，添加设备；左键图标打开快捷面板。
 
-### 手动运行
+适用于 Windows 10 2004 及以上的 64 位系统，Windows 11 22H2 及以上可使用毛玻璃效果。安装在当前用户目录，无需管理员权限。开机自启动可在设置中自行开启。
 
-```powershell
-git clone https://github.com/huanyuejue/MiHome-Windows.git
-cd MiHome-Windows
+也提供便携 ZIP：解压后运行 `MiHome-Tray.exe`，需要保留同目录中的全部文件。分享给普通用户时，直接发送 **Setup EXE 安装包**即可。安装包目前未进行代码签名。
 
-python -m venv .venv
-.venv\Scripts\pip install -e .
-.venv\Scripts\python.exe run.py
-```
+## 常用功能
 
-首次启动会弹出扫码窗口；之后凭据长期复用，失效时再次扫码即可。
+- **系统托盘常驻**：点击图标弹出快捷面板，支持收藏设备、场景和单列/双列布局。
+- **挂灯控制**：开关、亮度、色温；仅展示设备规格实际发布的能力。
+- **风扇控制**：本体电源、风速、模式及摇头，区分本体与指示灯的同名开关。
+- **顺畅调节**：滑块即时跟随鼠标，松手提交；连续调节使用最新值，回读不会打断拖动。
+- **状态同步**：面板展开后每 5 秒读取常用属性，每 30 秒刷新在线列表；指令发送后回读确认。
+- **桌面界面**：主页面与托盘均采用圆角和毛玻璃，支持深色、浅色及跟随系统。
+- **独立登录**：会话使用 Windows 当前用户的 DPAPI 加密，不共用第三方 CLI 的明文账号文件。
 
-## 本地缓存与数据存储
+## 设备与状态说明
 
-程序运行时会在以下位置生成配置和缓存文件，方便用户备份或排查问题：
+当前实机验证过米家智能显示器挂灯 1S（`yeelink.light.lamp22`）和风扇（`dmaker.fan.p8`）的状态读取，以及风扇本体开关的写入、回读和恢复。其他机型按 MIoT 规格生成控件，仍需各自实测。
 
-### 应用数据（Releases版）
+首版通过社区库的米家**云接口**读写设备，需要联网。状态有轮询延迟；「回读已确认」表示云接口返回目标值，不等同于物理动作检测。当前没有局域网直连或 MQTT 推送。
 
-路径：`%LOCALAPPDATA%\MiHome-Windows\`
+## 数据位置
 
-| 文件 | 说明 |
-|------|------|
-| `settings.json` | 应用设置（主题、缩放、托盘、自启动等） |
-| `tray.json` | 托盘快捷控制面板的设备/场景配置与显示顺序 |
-| `workbench.json` | 工作台（设备详情页）的自定义布局 |
-| `devices_cache.json` | 设备列表与状态缓存，启动时优先从缓存加载以加快首屏显示 |
+安装版与便携版均保存在 `%LOCALAPPDATA%\MiHome-Windows\`：
 
-> 路径中的 `%LOCALAPPDATA%` 通常为 `C:\Users\<用户名>\AppData\Local`。
-> 旧版曾写在 exe 同目录，首次启动会自动迁移至此。
+- `account.dpapi`：当前 Windows 用户加密的登录会话。
+- `tray.json`、`settings.json`、`workbench.json`：个人偏好。
+- `devices_cache.json`：上次设备列表与状态。
+- `logs\app.log`：运行日志。
 
-### 应用数据（源码模式）
+发行包不包含开发者的登录会话或设备缓存。每位用户需要自行扫码登录；卸载程序保留个人数据，方便重装后继续使用。
 
-路径：项目根目录（与 `run.py` 同级），文件名与Releases版一致
+## 从源码构建
 
-### 米家账号登录凭据
-
-路径：`~/.config/mijia-api/auth.json`
-
-这是 mijiaAPI 的认证文件，扫码登录后长期复用。失效时程序会自动提示重新扫码。
-
-> 路径中的 `~` 在 Windows 上为 `C:\Users\<用户名>`。
-
-## 构建可执行文件
-
-项目使用 **[Nuitka](https://nuitka.net/)** 将 Python 源码编译打包为原生 Windows 可执行文件（standalone 模式：把 Python 解释器、全部依赖与资源文件整合进一个免安装目录，最终产出 `dist\MiHome-Windows.exe`）。Nuitka 是真编译器——把代码编译为 C 再编译为机器码，而非 PyInstaller 式的"打包字节码"，这也是需要 VS Build Tools 的原因。
-
-### 前置条件
-
-| 工具 | 版本 | 说明 |
-|------|------|------|
-| Python | >= 3.10 | 需加入系统 PATH，构建脚本会自动创建 venv |
-| VS Build Tools | 2022 | Nuitka 编译所需的 C 编译器，约 2 GB |
-
-下载安装 VS Build Tools 2022：https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
-
-安装时勾选 **"使用 C++ 的桌面开发"** 工作负载。
-
-### 一键构建
+需要 Windows、Python 3.12，以及 [Inno Setup 6.7+](https://jrsoftware.org/isdl.php)。
 
 ```powershell
-git clone https://github.com/huanyuejue/MiHome-Windows.git
-cd MiHome-Windows
-
-# 双击 build_msvc.bat 或运行：
-.\build.ps1
+git clone https://github.com/INYerty/MiHome-Tray.git
+cd MiHome-Tray
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pytest tests/test_quick_controls.py -q
+.\.venv\Scripts\python.exe -m tests.smoke_test
+.\.venv\Scripts\python.exe build_portable.py
+.\.venv\Scripts\python.exe build_installer.py
 ```
 
-脚本自动完成：创建 venv → 安装依赖（含 Nuitka 本体）→ 激活 MSVC 编译环境 → Nuitka 编译 → 输出到 `dist/MiHome-Windows.exe`。
+如编译器不在标准位置，设置环境变量 `ISCC` 为 `ISCC.exe` 的完整路径。输出位于 `dist/`：安装 EXE、便携 ZIP、对应源码 ZIP 与 `SHA256SUMS.txt`。
 
-构建参数（打包资源清单、图标、排除项等）集中维护在 `build.ps1` 的 `$NuitkaArgs`；`build_msvc.bat` 只是转发到它的双击入口。
+构建流程会检查真实 EXE 的离线启动；发布前另外验证安装、安装后启动和卸载。效果图可用 `python -m tests.screenshot_demo` 启动隔离演示窗口后截图。
 
-首次构建耗时较长（创建 venv + 下载依赖 + Nuitka 编译，通常 5–15 分钟，视机器而定）
+## 来源与许可
 
-## 项目结构
+本项目是 [huanyuejue/MiHome-Windows](https://github.com/huanyuejue/MiHome-Windows) 的派生版本，上游基线为 `22655b8d0df07da44772833fbd33f696c0629b17`，保留原作者版权、历史和 [GPL-3.0-or-later 许可证](LICENSE)。[上游原始说明](docs/UPSTREAM_README.md) 另行保留。
 
-```
-app/
-├── core/                       # 核心层
-│   ├── service.py              # mijiaAPI 适配层，全项目唯一 import mijiaAPI 的模块
-│   ├── jobs.py                 # 串行任务队列，所有米家网络调用的后台通道
-│   ├── models.py               # 数据模型
-│   ├── _json_store.py          # JSON 持久化公共基础（数据目录/迁移/原子写）
-│   ├── cache.py                # 设备缓存
-│   ├── settings_store.py       # 应用设置持久化（含开机自启动注册表）
-│   ├── tray_store.py           # 托盘配置持久化
-│   ├── workbench_store.py      # 工作台配置持久化
-│   ├── update_checker.py       # GitHub Releases 新版本检查（后台线程 + 信号）
-│   └── restart.py              # 应用自重启（缩放等设置需重启生效时一键重启）
-├── ui/                         # 界面层
-│   ├── main_window.py          # 主窗口（无边框标题栏）
-│   ├── tray/                   # 系统托盘
-│   │   ├── quick_window.py     #   快捷控制面板（单列/双列卡片）
-│   │   ├── audio_bar.py        #   音响控制栏
-│   │   ├── controller.py       #   托盘控制器
-│   │   └── manager_dialog.py   #   托盘项目管理对话框
-│   ├── device_card.py          # 设备卡片组件
-│   ├── device_dialog.py        # 设备详情对话框
-│   ├── workbench_panel.py      # 工作台面板（属性/动作）
-│   ├── workbench_item.py       # 工作台属性/动作项
-│   ├── prop_widgets.py         # 属性控件（开关、滑块、下拉框）
-│   ├── power_button.py         # 三态电源按钮（卡片/托盘/详情共用）
-│   ├── overlay_dialog.py       # 遮罩对话框基类（详情/设置/抽屉共用）
-│   ├── about_dialog.py         # 关于对话框（版本信息、手动检测更新）
-│   ├── settings_dialog.py      # 设置对话框（主题界面/应用功能双分类）
-│   ├── voice_fab.py            # 语音悬浮球
-│   ├── toast.py                # 轻量通知浮层
-│   ├── update_flow.py          # 版本检查界面流程（弹框提示/静默反馈）
-│   ├── login_dialog.py         # 扫码登录对话框
-│   ├── add_drawer.py           # 设备添加抽屉
-│   ├── typewriter.py           # 打字机效果组件
-│   ├── si_theme.py             # 主题中枢（深/浅调色板 + 全局 QSS 生成）
-│   ├── theme_service.py        # 主题编排（跟随系统/浅色/深色）
-│   ├── restart.py              # 应用自重启
-│   ├── icon.ico / icon.png     # 应用图标
-│   └── tray_icon.png / tray_icon_light.png  # 托盘图标
-├── siui/                       # 内置 SiliconUI 组件库（GPL-3.0）
-│   ├── components/             # UI 组件
-│   ├── core/                   # 核心工具
-│   └── gui/                    # 图形工具
-└── __init__.py                 # 版本号 + 工具函数
+感谢 [mijia-api](https://github.com/Do1e/mijia-api)、[PySide6-SiliconUI](https://github.com/H1DDENADM1N/PySide6-SiliconUI) 和 [Qt for Python](https://doc.qt.io/qtforpython-6/)。安装包简体中文翻译来自 [kira-96](https://github.com/kira-96/Inno-Setup-Chinese-Simplified-Translation)，采用 MIT 许可。详见 [第三方说明](THIRD_PARTY_NOTICES.md)。
 
-tests/
-├── smoke_test.py               # 上游升级后的接口兼容性自检
-└── theme_test.py               # 主题切换回归（离屏像素断言）
-
-run.py                          # 程序入口
-start.bat                       # Windows 一键运行（双击运行）
-build_msvc.bat                  # Windows 一键构建（双击运行，转发 build.ps1）
-build.ps1                       # PowerShell 构建脚本（Nuitka 参数唯一来源）
-pyproject.toml                  # 项目配置
-LICENSE                         # GPL-3.0 许可证
-```
-
-## 依赖说明
-
-| 包名 | 版本 | 用途 |
-|------|------|------|
-| mijiaAPI | >=5,<6 | 米家 API 封装 |
-| PySide6 | >=6.7 | Qt6 绑定 |
-| qrcode | >=8 | 登录二维码生成 |
-| qtawesome | >=1.4 | Material Design 图标 |
-| numpy | - | SiliconUI 动画插值 |
-| typing_extensions | - | SiliconUI 在 Python 3.10 下所需的类型别名 |
-
-## 开源许可
-
-本项目基于 [GPL-3.0](LICENSE) 或更高版本发布。
-
-### 第三方组件
-
-本程序使用了以下 GPL-3.0 协议的开源组件，在此向原作者致谢：
-
-- [mijia-api](https://github.com/Do1e/mijia-api) - 米家 API 封装
-- [PySide6-SiliconUI](https://github.com/H1DDENADM1N/PySide6-SiliconUI) - UI 组件库（已内置至 `app/siui/`）
-
-对本项目代码的使用、修改与分发同样须遵循 GPL-3.0。
-
-本程序不含任何担保。请自行承担使用风险，并遵守小米的服务条款。
+本项目不是小米官方客户端，与小米无隶属关系。分发或修改本项目时请保留许可证及对应源码。

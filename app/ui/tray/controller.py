@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from app.core.jobs import JobExecutor
 from app.core.models import DeviceInfo
+from app.core.quick_controls import QuickControlRegistry
 from app.core.service import MijiaService
 from app.ui.tray.quick_window import TrayQuickWindow
 
@@ -21,6 +22,8 @@ class TrayController:
         self._jobs = jobs
         self._main = main_window
         self._pending_show = False
+        self._controls = QuickControlRegistry(service, jobs, main_window)
+        self._controls.presence_requested.connect(main_window._refresh_presence)
         # 快捷窗口设为独立顶层窗口，不随主窗口模态对话框被阻塞
         self._create_quick_window()
 
@@ -32,7 +35,7 @@ class TrayController:
         _tray_icon.addFile(_icon_path, QSize(32, 32))
         _tray_icon.addFile(_icon_path, QSize(48, 48))
         self._tray = QSystemTrayIcon(_tray_icon, main_window)
-        self._tray.setToolTip("米家 - MiHome for Windows")
+        self._tray.setToolTip("米家快捷控制 - MiHome Tray")
         self._tray.activated.connect(self._on_activated)
 
         menu = QMenu()
@@ -87,7 +90,8 @@ class TrayController:
 
     def _create_quick_window(self) -> None:
         """创建快捷窗口并接线；主题切换时整窗重建复用。"""
-        self._quick = TrayQuickWindow(self._service, self._jobs, None)
+        self._quick = TrayQuickWindow(self._service, self._jobs, None, registry=self._controls)
+        self._quick.presence_requested.connect(self._main._refresh_presence)
         self._quick.manage_requested.connect(self._on_manage)
         self._quick.open_device_requested.connect(self._on_open_device)
         self._quick.open_main_requested.connect(self._show_main)
@@ -152,6 +156,11 @@ class TrayController:
 
     def set_devices(self, devices: list[DeviceInfo], known_power: dict[str, bool | None]) -> None:
         self._quick.set_devices(devices, known_power)
+
+    def confirm_presence(self, devices) -> None:
+        self._controls.confirm_presence(devices)
+        if self._quick.isVisible():
+            self._quick._refresh_controls()
 
     def set_metrics(self, metrics: dict[str, str | None]) -> None:
         self._quick.set_metrics(metrics)
