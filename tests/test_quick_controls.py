@@ -276,7 +276,7 @@ def test_tray_power_button_submits_the_requested_state(session):
     assert session.service.writes == [(LAMP.did, "on", False)]
     session._confirm_timer.stop()
     session._read()
-    assert button.text() == "已关闭" and not button.isChecked()
+    assert button.state() is False and not button.isChecked()
     card.deleteLater()
 
 

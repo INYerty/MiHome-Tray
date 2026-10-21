@@ -7,13 +7,16 @@
 之上，观感与添加功能抽屉一致；内部直接复用 WorkbenchPanel。
 """
 
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout
+from PySide6.QtWidgets import QHBoxLayout, QScrollArea, QTabWidget, QVBoxLayout
 
 from app.core.jobs import JobExecutor
-from app.core.models import DeviceInfo
+from app.core.models import DeviceInfo, is_speaker
+from app.core.router import is_router
 from app.core.service import MijiaService
 from app.ui.overlay_dialog import OverlayDialog
 from app.ui.workbench_panel import WorkbenchPanel
+from app.ui.router_panel import RouterPanel
+from app.ui.speaker_commands import SpeakerCommands
 
 
 class DeviceDetailDialog(OverlayDialog):
@@ -34,7 +37,23 @@ class DeviceDetailDialog(OverlayDialog):
 
         # 工作台
         self._workbench = WorkbenchPanel(service, jobs, self._panel)
-        outer.addWidget(self._workbench, stretch=1)
+        self._router = None
+        self._speaker_commands = None
+        if is_router(device):
+            tabs = QTabWidget(self._panel)
+            self._router = RouterPanel(service, jobs, device, tabs)
+            scroll = QScrollArea(tabs)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setWidget(self._router)
+            tabs.addTab(scroll, "网络概览")
+            tabs.addTab(self._workbench, "更多功能")
+            outer.addWidget(tabs, stretch=1)
+        else:
+            if is_speaker(device):
+                self._speaker_commands = SpeakerCommands(service, jobs, device, self._panel)
+                outer.addWidget(self._speaker_commands)
+            outer.addWidget(self._workbench, stretch=1)
 
     @property
     def panel(self) -> WorkbenchPanel:
@@ -47,6 +66,10 @@ class DeviceDetailDialog(OverlayDialog):
         """主题切换：面板底色 + 工作台头部按钮与功能区块重建。"""
         super().retheme()
         self._workbench.retheme()
+        if self._router is not None:
+            self._router.retheme()
+        if self._speaker_commands is not None:
+            self._speaker_commands.retheme()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)

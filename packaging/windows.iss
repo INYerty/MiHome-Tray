@@ -48,4 +48,11 @@ Name: "{group}\米家快捷控制"; Filename: "{app}\MiHome-Tray.exe"; WorkingDi
 Name: "{autodesktop}\米家快捷控制"; Filename: "{app}\MiHome-Tray.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\MiHome-Tray.exe"; Description: "启动米家快捷控制"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MiHome-Tray.exe"; Description: "启动米家快捷控制"; Flags: nowait postinstall skipifsilent; Check: not IsAppUpdate
+Filename: "{app}\MiHome-Tray.exe"; Flags: nowait; Check: IsAppUpdate
+
+[Code]
+function IsAppUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:APPUPDATE|0}') = '1';
+end;

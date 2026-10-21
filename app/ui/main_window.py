@@ -41,6 +41,7 @@ from app.core import cache as device_cache
 from app.core import icon_store
 from app.core.jobs import JobExecutor
 from app.core.models import DeviceInfo, SceneInfo, is_speaker
+from app.core.quick_controls import QuickControlRegistry, supports_quick_controls
 from app.core.service import MijiaService
 from app.ui.device_card import DeviceCard
 from app.ui.device_dialog import DeviceDetailDialog
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
         # 右下角小爱语音悬浮球：设备列表里存在小爱音箱才显示
         self._voice_fab = VoiceFab(self)
         self._voice_fab.submitted.connect(self._on_voice_command)
+        self._voice_fab.failed.connect(lambda text: Toast.info(self, text, 5000))
         self._voice_did: str | None = None
 
         # 主题控制器：跟随系统模式下监听系统配色变化
@@ -193,6 +195,11 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             print(f"[Tray] 创建失败: {e}")
             self._tray = None
+        # The homepage and flyout share one state owner and one debounced writer.
+        self._main_controls = (self._tray._controls if self._tray is not None else
+                               QuickControlRegistry(self._service, self._jobs, self))
+        if self._tray is None:
+            self._main_controls.presence_requested.connect(self._refresh_presence)
 
         root = QVBoxLayout()
         root.setContentsMargins(0, 0, 0, 0)
@@ -228,6 +235,7 @@ class MainWindow(QMainWindow):
         self._more_menu.addAction(self._refresh_action)
         self._more_menu.addAction("托盘管理").triggered.connect(self.show_tray_manager)
         self._more_menu.addAction("设置").triggered.connect(self.show_settings)
+        self._more_menu.addAction("检查更新").triggered.connect(self._check_update_manually)
         # 「关于」固定在菜单最底部
         self._more_menu.addSeparator()
         self._more_menu.addAction("关于").triggered.connect(self.show_about)
@@ -275,7 +283,8 @@ class MainWindow(QMainWindow):
         body.addWidget(content_host, stretch=1)
         root.addLayout(body)
 
-        container = QWidget()
+        from app.ui.dashboard_surface import DashboardSurface
+        container = DashboardSurface()
         container.setObjectName("glassSurface")
         container.setLayout(root)
         self.setCentralWidget(container)
@@ -305,11 +314,13 @@ class MainWindow(QMainWindow):
         self._count_label.setStyleSheet(
             f"color: {SiColors.TEXT_MUTED}; background: transparent;")
         self.centralWidget().setStyleSheet(
-            f"QWidget#glassSurface {{ background: {tint(SiColors.WINDOW_BG, 55)}; border-radius: 20px; }}"
+            "QWidget#glassSurface { background: transparent; border-radius: 20px; }"
             "QWidget#contentHost, QWidget#gridHost, QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }"
             "QFrame#titleBar { background: transparent; border: none; }")
         if self.isVisible():
             apply_glass(self)
+        if hasattr(self.centralWidget(), "sync_effects"):
+            self.centralWidget().sync_effects()
         self._more_menu.setStyleSheet(
             f"QMenu {{ background: {SiColors.CARD}; border: 1px solid {SiColors.BTN_HOVER}; border-radius: 8px; padding: 4px; }}"
             f"QMenu::item {{ color: {SiColors.TEXT_PRIMARY}; padding: 6px 24px 6px 12px; border-radius: 4px; }}"
@@ -526,6 +537,10 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(3000, self, _run)
 
+    def _check_update_manually(self) -> None:
+        from app.ui.update_flow import check_update
+        check_update(self, manual=True)
+
     def _after_login_check(self, logged_in: bool) -> None:
         if logged_in:
             self._startup_load()
@@ -575,11 +590,15 @@ class MainWindow(QMainWindow):
         logger.warning("刷新在线状态失败: %s", error)
         if self._tray is not None:
             self._tray._controls.presence_failed()
+        else:
+            self._main_controls.presence_failed()
 
     def _presence_done(self, devices) -> None:
         self._presence_in_flight = False
         if self._tray is not None:
             self._tray.confirm_presence(devices)
+        else:
+            self._main_controls.confirm_presence(devices)
         old = {d.did: d for d in self._all_devices}
         changed = set(old) != {d.did for d in devices}
         for dev in devices:
@@ -617,6 +636,8 @@ class MainWindow(QMainWindow):
         self._loading_devices = False
         if self._tray is not None:
             self._tray.confirm_presence(devices)
+        else:
+            self._main_controls.confirm_presence(devices)
         self._refresh_action.setEnabled(True)
         self._refresh_action.setText("刷新")
         # 对比要在替换前做：added/removed 以旧列表为基准
@@ -908,6 +929,7 @@ class MainWindow(QMainWindow):
     def _on_voice_command(self, text: str) -> None:
         did = self._voice_did
         if did is None:
+            self._voice_fab.set_result("没有在线小爱音箱，暂时无法执行。")
             return
         # 设置的默认音箱离线/不在列表 → 已回退：提示里说明，并把
         # 设置回退为「自动」（否则偏好一直指向离线设备，每次都要回退）
@@ -917,11 +939,21 @@ class MainWindow(QMainWindow):
         if pref and pref != did:
             fallback_note = "（首选音箱离线，已由当前在线音箱代答）"
             set_default_speaker_did("")
+        self._voice_fab.set_result(f"正在执行：{text}")
+        def succeeded(_result):
+            message = f"已告诉小爱同学：{text}{fallback_note}"
+            self._voice_fab.set_result(message)
+            Toast.info(self, message, 3000)
+
+        def failed(error):
+            message = f"执行失败：{error}"
+            self._voice_fab.set_result(message)
+            Toast.info(self, message, 4000)
+
         self._jobs.submit(
             lambda: self._service.run_action(did, "execute-text-directive", [text]),
-            on_success=lambda _, note=fallback_note: Toast.info(
-                self, f"已告诉小爱同学：{text}{note}", 3000),
-            on_error=lambda e: Toast.info(self, f"执行失败：{e}", 4000),
+            on_success=succeeded,
+            on_error=failed,
         )
 
     def _update_count_label(self) -> None:
@@ -954,13 +986,17 @@ class MainWindow(QMainWindow):
         force=True 忽略记忆全量重读（定时轮询）。
         离线设备的云端返回值是最后一次在线时的缓存，不可信，跳过。
         """
+        controls = getattr(self, "_main_controls", None)
+        if controls is not None:
+            self._refresh_card_controls()
         if self._poll_in_flight:
             return
         # 以 DeviceInfo.online 为准：离线设备的云端开关值不可信
         from app.core import tray_store
         favorites = set(tray_store.load())
         visible = {d.did for d in self._visible_devices()}
-        dids = [d.did for d in self._all_devices if d.online and
+        quick_owned = set(controls.sessions) if controls is not None else set()
+        dids = [d.did for d in self._all_devices if d.online and d.did not in quick_owned and
                 (d.did in visible or d.did in favorites)]
         if not dids:
             return
@@ -976,6 +1012,13 @@ class MainWindow(QMainWindow):
             on_success=self._apply_power_states,
             on_error=self._on_poll_error,
         )
+
+    def _refresh_card_controls(self) -> None:
+        controls = getattr(self, "_main_controls", None)
+        if (controls is None or not controls.presence_known or not self.isVisible()
+                or self._current_room == _SCENE_TAB):
+            return
+        controls.refresh([did for did, card in self._cards.items() if card.session is not None])
 
     def _on_poll_error(self, error: Exception) -> None:
         # 轮询失败不打断界面，但必须留痕：持续失败意味着网络/凭据异常
@@ -1212,7 +1255,9 @@ class MainWindow(QMainWindow):
         self._grid_columns = cols
         rows = (len(visible) + cols - 1) // cols
         for index, device in enumerate(visible):
-            card = DeviceCard(device)
+            session = (self._main_controls.session(device)
+                       if supports_quick_controls(device) else None)
+            card = DeviceCard(device, session=session)
             # 记忆里的开关状态与读数立即回显，重建卡片不丢状态
             known = self._known_power.get(device.did)
             if known is not None:
@@ -1229,6 +1274,7 @@ class MainWindow(QMainWindow):
             self._cards[device.did] = card
             self._grid.addWidget(card, index // cols, index % cols)
         self._finalize_grid(cols, rows)
+        self._refresh_card_controls()
 
     def _rebuild_scene_grid(self) -> None:
         """场景视图网格：卡片尺寸与设备卡一致，列数换算直接复用。"""
@@ -1313,6 +1359,7 @@ class MainWindow(QMainWindow):
         # 托盘常驻启动/唤出：隐藏期间积压的网格重建在此执行
         if self._grid_dirty:
             self._rebuild_grid()
+        self._refresh_card_controls()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt 命名约定)
         super().resizeEvent(event)
@@ -1381,6 +1428,12 @@ class MainWindow(QMainWindow):
     def _on_power_clicked(self, did: str) -> None:
         card = self._cards.get(did)
         if card is None:
+            return
+        if card.session is not None:
+            session = card.session
+            power = card.power_prop()
+            if power is not None and session.values.get(power.name) is not None:
+                session.request_write(power.name, not bool(session.values[power.name]))
             return
         card.set_busy(True)
         self._jobs.submit(

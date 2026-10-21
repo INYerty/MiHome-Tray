@@ -231,6 +231,51 @@ class MijiaService:
         except Exception as exc:
             raise _wrap_error(exc, f"读取属性 {name} 失败") from exc
 
+    def router_snapshot(self, did: str):
+        """Read only telemetry explicitly published by this router's own spec.
+
+        Upstream's flattened spec drops units, so router telemetry retains the
+        original official schema separately. All calls run on JobExecutor.
+        """
+        import time
+        import requests
+        from .router import RouterCapabilities, RouterSnapshot, discover_router
+
+        if did not in self._device_index:
+            self._refresh_device_index()
+        spec_type = self._device_index.get(did, ("", "", ""))[1]
+        if not spec_type:
+            return RouterSnapshot(RouterCapabilities(), {}, time.monotonic())
+        cache = getattr(self, "_router_capability_cache", None)
+        if cache is None:
+            self._router_capability_cache = cache = {}
+        if spec_type not in cache:
+            try:
+                response = requests.get("https://miot-spec.org/miot-spec-v2/instance",
+                                        params={"type": spec_type}, timeout=(5, 12))
+                response.raise_for_status()
+                spec = response.json()
+                if not isinstance(spec, dict) or not isinstance(spec.get("services"), list):
+                    raise ValueError("功能规格格式无效")
+                cache[spec_type] = discover_router(spec)
+            except Exception as exc:
+                raise _wrap_error(exc, "获取路由器功能规格失败") from exc
+        capabilities = cache[spec_type]
+        values = {prop.key: None for prop in capabilities.properties}
+        props = list(capabilities.properties)
+        for start in range(0, len(props), _BATCH_SIZE):
+            batch = props[start:start + _BATCH_SIZE]
+            queries = [{"did": did, "siid": p.siid, "piid": p.piid} for p in batch]
+            try:
+                result = self._api.get_devices_prop(queries)
+            except Exception as exc:
+                raise _wrap_error(exc, "读取路由器状态失败") from exc
+            for item in result:
+                key = f"{item.get('siid')}.{item.get('piid')}"
+                if key in values and item.get("code") == 0:
+                    values[key] = item.get("value")
+        return RouterSnapshot(capabilities, values, time.monotonic())
+
     def read_props(self, did: str, names: list[str]) -> dict[str, Any | None]:
         """批量读取同一台设备的多个属性，一次请求替代逐个轮询。
 

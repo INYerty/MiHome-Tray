@@ -10,7 +10,7 @@
 import shiboken6
 from typing import Any, Callable
 
-from PySide6.QtCore import QParallelAnimationGroup, QPropertyAnimation, QTimer, Qt, Signal
+from PySide6.QtCore import QEvent, QParallelAnimationGroup, QPropertyAnimation, QTimer, Qt, Signal
 from PySide6.QtCore import QEasingCurve
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -33,7 +34,7 @@ from app.ui.prop_widgets import (
     group_props,
 )
 from app.ui.si_theme import SiColors, themed_label
-from app.ui.workbench_item import WorkbenchItemWrapper
+from app.ui.workbench_item import WORKBENCH_MIME, WorkbenchItemWrapper
 
 
 class _SpinCircle(QWidget):
@@ -94,6 +95,7 @@ class WorkbenchPanel(QWidget):
         self._drawer: AddDrawer | None = None
         # 重排动画进行中标志：动画期间布局被禁用，再入会以错误几何结算
         self._reordering = False
+        self._column_count = 2
         self._reorder_group: QParallelAnimationGroup | None = None
         self._current_groups: list[tuple[str, list[PropInfo], PropInfo | None]] = []
         # 写后静默与乐观值：避免设备未落盘前的旧值把 UI 弹回
@@ -122,11 +124,15 @@ class WorkbenchPanel(QWidget):
         title_box = QVBoxLayout()
         self._title_label = QLabel("未选择设备")
         self._title_label.setObjectName("panelTitle")
+        self._title_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._title_label.setWordWrap(True)
         self._model_label = QLabel("选择一台设备开始控制")
         self._model_label.setObjectName("panelSubtitle")
+        self._model_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._model_label.setWordWrap(True)
         title_box.addWidget(self._title_label)
         title_box.addWidget(self._model_label)
-        header.addLayout(title_box)
+        header.addLayout(title_box, 1)
         header.addStretch(1)
         self._refresh_btn = QPushButton("刷新")
         self._refresh_btn.setFixedSize(64, 32)
@@ -209,10 +215,12 @@ class WorkbenchPanel(QWidget):
         icon.setStyleSheet(f"color: {SiColors.OFFLINE_SUB}; font-size: 28pt; background: transparent;")
         el.addWidget(icon)
         self._empty_title = QLabel("此设备控制面板还是空的")
+        self._empty_title.setWordWrap(True)
         self._empty_title.setAlignment(Qt.AlignCenter)
         self._empty_title.setStyleSheet(f"color: {SiColors.TEXT_PRIMARY}; font-size: 11pt; background: transparent;")
         el.addWidget(self._empty_title)
         self._empty_desc = QLabel("点击下方按钮添加控制功能")
+        self._empty_desc.setWordWrap(True)
         self._empty_desc.setAlignment(Qt.AlignCenter)
         self._empty_desc.setStyleSheet(f"color: {SiColors.TEXT_SECONDARY}; font-size: 9pt; background: transparent;")
         el.addWidget(self._empty_desc)
@@ -233,7 +241,7 @@ class WorkbenchPanel(QWidget):
         self._footer_add_btn.setCursor(Qt.PointingHandCursor)
         self._footer_add_btn.setFixedHeight(40)
         self._footer_add_btn.setStyleSheet(
-            f"QPushButton {{ background: {SiColors.CARD}; border: 1px solid #3dbba4; border-radius: 12px; color: #3dbba4; font-size: 10pt; }}"
+            f"QPushButton {{ background: {SiColors.CARD}; border: 1px solid #ff6900; border-radius: 12px; color: #ff6900; font-size: 10pt; }}"
             f"QPushButton:hover {{ background: {SiColors.CARD_HOVER}; }}")
         self._footer_add_btn.clicked.connect(self._open_drawer)
         self._footer_add_btn.hide()
@@ -243,6 +251,13 @@ class WorkbenchPanel(QWidget):
         self._container = container
         self.setAcceptDrops(True)
         container.setAcceptDrops(True)
+        body.viewport().setAcceptDrops(True)
+        container.installEventFilter(self)
+        body.viewport().installEventFilter(self)
+        self._drop_line = QFrame(container)
+        self._drop_line.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._drop_line.setStyleSheet(f"background: {SiColors.THEME}; border-radius: 2px;")
+        self._drop_line.hide()
 
     # ---------- 加载 ----------
 
@@ -436,8 +451,8 @@ class WorkbenchPanel(QWidget):
                     edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                     edit.setStyleSheet(
                         f"QLineEdit {{ background: {SiColors.WINDOW_BG}; border: 1px solid {SiColors.LINE}; border-radius: 8px; "
-                        f"padding: 6px 10px; color: {SiColors.TEXT_PRIMARY}; selection-background-color: #3dbba4; font-size: 10pt; }}"
-                        "QLineEdit:focus { border-color: #3dbba4; }"
+                        f"padding: 6px 10px; color: {SiColors.TEXT_PRIMARY}; selection-background-color: #ff6900; font-size: 10pt; }}"
+                        "QLineEdit:focus { border-color: #ff6900; }"
                     )
                     row.addWidget(edit, 1)
                     btn = QPushButton("执行")
@@ -498,8 +513,6 @@ class WorkbenchPanel(QWidget):
         self._empty.hide()
         self._body.show()
         self._footer_add_btn.setVisible(self._mode == "manage")
-        self._left_h = 0
-        self._right_h = 0
         for key in list(self._active_keys):
             builder = self._module_builders.get(key)
             if builder is None:
@@ -508,21 +521,13 @@ class WorkbenchPanel(QWidget):
             wrapper = WorkbenchItemWrapper(key, inner)
             wrapper.request_delete.connect(self._on_delete)
             wrapper.request_move.connect(self._on_move)
+            wrapper.drag_finished.connect(self._drop_line.hide)
             wrapper.set_mode(self._mode)
             if not self._current_online:
                 wrapper.set_offline(True)
                 inner.setEnabled(False)
             self._wrappers[key] = wrapper
-            # 瀑布流分栏高度估算（与重排动画共用同一公式）
-            h = wrapper.estimated_height()
-            if self._left_h <= self._right_h:
-                self._left_col.addWidget(wrapper)
-                self._left_h += h + 14
-            else:
-                self._right_col.addWidget(wrapper)
-                self._right_h += h + 14
-        self._left_col.addStretch(1)
-        self._right_col.addStretch(1)
+        self._place_wrappers()
         # 批量回读
         self._reload_readings()
 
@@ -650,11 +655,17 @@ class WorkbenchPanel(QWidget):
         for w in self._wrappers.values():
             w.set_mode(mode)
         self._footer_add_btn.setVisible(is_manage and bool(self._active_keys))
+        self._drop_line.hide()
+        if self._wrappers:
+            self._reorder_with_animation({})
 
     def _reorder_with_animation(self, old_geoms: dict) -> None:
         # 复用已有 wrapper，仅重排布局并做滑动动画
-        if self._reordering:
-            return
+        if self._reorder_group is not None:
+            self._reorder_group.stop()
+            self._reorder_group.deleteLater()
+            self._reorder_group = None
+            self._container.layout().setEnabled(True)
         self._reordering = True
         # 1. 移除但不删除
         for lay in (self._left_col, self._right_col):
@@ -663,26 +674,11 @@ class WorkbenchPanel(QWidget):
                 w = it.widget()
                 if w is not None:
                     w.hide()
-        # 2. 按新顺序以瀑布流重新加入（高度公式与 _render_workbench 一致）
-        left_h = right_h = 0
-        for key in list(self._active_keys):
-            w = self._wrappers.get(key)
-            if w is None:
-                continue
-            h = w.estimated_height()
-            if left_h <= right_h:
-                self._left_col.addWidget(w)
-                left_h += h + 14
-            else:
-                self._right_col.addWidget(w)
-                right_h += h + 14
-            w.show()
-        self._left_col.addStretch(1)
-        self._right_col.addStretch(1)
-        # 3. 强制布局计算新几何
+        self._place_wrappers()
+        self._container.layout().invalidate()
         self._container.layout().activate()
-        from PySide6.QtWidgets import QApplication as _QApp
-        _QApp.processEvents()
+        self._left_col.activate()
+        self._right_col.activate()
         new_geoms = {k: w.geometry() for k, w in self._wrappers.items()}
         # 4. 禁用布局，准备动画
         self._container.layout().setEnabled(False)
@@ -715,56 +711,149 @@ class WorkbenchPanel(QWidget):
         else:
             _release()
 
+    def _place_wrappers(self) -> None:
+        """One column in the popup, two columns when there is room for controls."""
+        self._column_count = 1 if self.width() < 560 else 2
+        self._grid.setSpacing(0 if self._column_count == 1 else 14)
+        self._grid.setStretch(0, 1)
+        self._grid.setStretch(1, 0 if self._column_count == 1 else 1)
+        left_h = right_h = 0
+        for key in self._active_keys:
+            wrapper = self._wrappers.get(key)
+            if wrapper is None:
+                continue
+            height = max(wrapper.estimated_height(), wrapper.sizeHint().height()) + 14
+            if self._column_count == 1 or left_h <= right_h:
+                self._left_col.addWidget(wrapper)
+                left_h += height
+            else:
+                self._right_col.addWidget(wrapper)
+                right_h += height
+            wrapper.show()
+        self._left_col.addStretch(1)
+        self._right_col.addStretch(1)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        columns = 1 if self.width() < 560 else 2
+        if self._wrappers and columns != self._column_count:
+            QTimer.singleShot(0, self._relayout_for_width)
+
+    def _relayout_for_width(self) -> None:
+        if not shiboken6.isValid(self) or not self._wrappers:
+            return
+        if (1 if self.width() < 560 else 2) != self._column_count:
+            self._reorder_with_animation({})
+
     # ---------- 拖拽排序 ----------
 
-    def dragEnterEvent(self, event) -> None:  # noqa: N802
-        if self._mode != "manage":
+    def _drag_key(self, event) -> str | None:
+        mime = event.mimeData()
+        if self._mode != "manage" or not mime.hasFormat(WORKBENCH_MIME):
+            return None
+        key = bytes(mime.data(WORKBENCH_MIME)).decode("utf-8", errors="replace")
+        source = event.source()
+        return key if key in self._wrappers and source is self._wrappers[key] else None
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj in (self._container, self._body.viewport()) and event.type() in (
+            QEvent.DragEnter, QEvent.DragMove, QEvent.DragLeave, QEvent.Drop
+        ):
+            self._handle_drag_event(obj, event)
+            return True
+        return super().eventFilter(obj, event)
+
+    def _handle_drag_event(self, receiver, event) -> None:
+        if event.type() == QEvent.DragLeave:
+            self._drop_line.hide()
+            event.accept()
+            return
+        key = self._drag_key(event)
+        if key is None:
+            self._drop_line.hide()
             event.ignore()
             return
-        if event.mimeData().hasText() and event.mimeData().text() in self._active_keys:
-            event.acceptProposedAction()
-        else:
+        pos = self._container.mapFrom(receiver, event.position().toPoint())
+        if not self._body.viewport().rect().contains(
+            self._body.viewport().mapFrom(receiver, event.position().toPoint())
+        ):
+            self._drop_line.hide()
             event.ignore()
+            return
+        if event.type() == QEvent.Drop:
+            self._drop_line.hide()
+            self._apply_drop(key, pos)
+        else:
+            self._show_drop_line(pos, key)
+            viewport_y = self._body.viewport().mapFrom(receiver, event.position().toPoint()).y()
+            bar = self._body.verticalScrollBar()
+            if viewport_y < 28:
+                bar.setValue(bar.value() - 12)
+            elif viewport_y > self._body.viewport().height() - 28:
+                bar.setValue(bar.value() + 12)
+        event.acceptProposedAction()
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        self._handle_drag_event(self, event)
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802
-        if self._mode == "manage" and event.mimeData().hasText():
-            event.acceptProposedAction()
-        else:
-            event.ignore()
+        self._handle_drag_event(self, event)
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802
+        self._drop_line.hide()
+        event.accept()
 
     def dropEvent(self, event) -> None:  # noqa: N802
-        if self._mode != "manage":
-            event.ignore()
+        self._handle_drag_event(self, event)
+
+    def _hit_insert(self, pos, source_key: str) -> tuple[str | None, bool]:
+        # A drop on the original card is a no-op. Gaps select the nearest real
+        # card instead of unexpectedly sending the source to the end.
+        source = self._wrappers.get(source_key)
+        if source is not None and source.geometry().contains(pos):
+            return source_key, False
+        candidates = [(key, wrapper.geometry()) for key, wrapper in self._wrappers.items()
+                      if key != source_key]
+        if not candidates:
+            return source_key, False
+        if pos.y() > max(rect.bottom() for _, rect in candidates):
+            return None, True
+        def distance(item):
+            rect = item[1]
+            dx = max(rect.left() - pos.x(), 0, pos.x() - rect.right())
+            dy = max(rect.top() - pos.y(), 0, pos.y() - rect.bottom())
+            return dx * dx + dy * dy
+        key, rect = min(candidates, key=distance)
+        return key, pos.y() >= rect.center().y()
+
+    def _show_drop_line(self, pos, source_key: str) -> None:
+        target, after = self._hit_insert(pos, source_key)
+        if target == source_key:
+            self._drop_line.hide()
             return
-        from_key = event.mimeData().text()
-        if from_key not in self._active_keys:
-            event.ignore()
+        if target is None:
+            target = self._active_keys[-1]
+        rect = self._wrappers[target].geometry()
+        y = rect.bottom() + 4 if after else max(0, rect.top() - 5)
+        self._drop_line.setGeometry(rect.left(), y, rect.width(), 3)
+        self._drop_line.show()
+        self._drop_line.raise_()
+
+    def _apply_drop(self, from_key: str, pos) -> None:
+        if from_key not in self._active_keys or self._current_did is None:
             return
-        # 找到落点下的目标卡片
-        pos = self._container.mapFrom(self, event.position().toPoint())
-        target = None
-        for key, wrapper in self._wrappers.items():
-            if wrapper.geometry().contains(pos):
-                target = key
-                break
-        # 记录旧几何用于滑动动画
-        old_geoms = {k: w.geometry() for k, w in self._wrappers.items()}
-        if target is None or target == from_key:
-            # 拖到空白处 -> 移到末尾
-            if from_key in self._active_keys:
-                self._active_keys.remove(from_key)
-                self._active_keys.append(from_key)
-                workbench_store.save(self._current_did, self._active_keys)
-                self._reorder_with_animation(old_geoms)
-            event.acceptProposedAction()
+        target, after = self._hit_insert(pos, from_key)
+        if target == from_key:
             return
-        # 插入到目标之前
-        self._active_keys.remove(from_key)
-        idx = self._active_keys.index(target)
-        self._active_keys.insert(idx, from_key)
+        reordered = [key for key in self._active_keys if key != from_key]
+        index = len(reordered) if target is None else reordered.index(target) + int(after)
+        reordered.insert(index, from_key)
+        if reordered == self._active_keys:
+            return
+        old_geoms = {key: wrapper.geometry() for key, wrapper in self._wrappers.items()}
+        self._active_keys = reordered
         workbench_store.save(self._current_did, self._active_keys)
         self._reorder_with_animation(old_geoms)
-        event.acceptProposedAction()
 
     # ---------- 读写（复用 DevicePanel 逻辑） ----------
 

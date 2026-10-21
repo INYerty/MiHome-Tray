@@ -26,7 +26,7 @@ _DEFAULTS: dict = {
     "default_speaker_did": "",  # 小爱指令默认输出音箱；空串=自动（第一个在线）
     "ui_scale": 1.0,    # 界面缩放个人微调乘数（叠加在软件基准缩放之上），需重启生效
     "tray_columns": 1,  # 灯/风扇的完整快捷控件默认单列
-    "check_update_enabled": False,  # 本地派生版本不提示用上游发行包覆盖
+    "check_update_enabled": True,  # 从当前派生仓库检查；保留用户已有关闭设置
 }
 
 
@@ -126,6 +126,67 @@ def get_tray_columns() -> int:
 def set_tray_columns(value: int) -> None:
     raw = _read_raw()
     raw["tray_columns"] = int(value) if int(value) in (1, 2) else 2
+    _write_raw(raw)
+
+
+def get_tray_size() -> tuple[int, int] | None:
+    value = _read_raw().get("tray_size")
+    if not isinstance(value, list) or len(value) != 2:
+        return None
+    try:
+        width, height = map(int, value)
+    except (TypeError, ValueError):
+        return None
+    return (width, height) if 320 <= width <= 2400 and 320 <= height <= 1800 else None
+
+
+def get_ambient_enabled() -> bool:
+    return bool(_read_raw().get("ambient_enabled", False))
+
+
+def set_ambient_enabled(value: bool) -> None:
+    raw = _read_raw()
+    raw["ambient_enabled"] = bool(value)
+    _write_raw(raw)
+
+
+def set_tray_size(width: int, height: int) -> None:
+    raw = _read_raw()
+    raw["tray_size"] = [max(320, min(int(width), 2400)), max(320, min(int(height), 1800))]
+    _write_raw(raw)
+
+
+def get_tray_hidden_controls(did: str) -> set[str]:
+    devices = _read_raw().get("tray_hidden_controls", {})
+    values = devices.get(did, []) if isinstance(devices, dict) else []
+    return {name for name in values if isinstance(name, str)} if isinstance(values, list) else set()
+
+
+def set_tray_hidden_controls(did: str, names) -> None:
+    raw = _read_raw()
+    if not isinstance(raw.get("tray_hidden_controls"), dict):
+        raw["tray_hidden_controls"] = {}
+    raw["tray_hidden_controls"][did] = sorted({name for name in names if isinstance(name, str)})
+    _write_raw(raw)
+
+
+def get_speaker_commands(did: str) -> list[dict[str, str]]:
+    commands = _read_raw().get("speaker_commands", {})
+    items = commands.get(did, []) if isinstance(commands, dict) else []
+    if not isinstance(items, list):
+        return []
+    return [{"title": item["title"], "text": item["text"]}
+            for item in items if isinstance(item, dict)
+            and isinstance(item.get("title"), str) and item["title"].strip()
+            and isinstance(item.get("text"), str) and item["text"].strip()]
+
+
+def set_speaker_commands(did: str, commands: list[dict[str, str]]) -> None:
+    raw = _read_raw()
+    if not isinstance(raw.get("speaker_commands"), dict):
+        raw["speaker_commands"] = {}
+    raw["speaker_commands"][did] = [{"title": item["title"].strip(), "text": item["text"].strip()}
+                                    for item in commands if item["title"].strip() and item["text"].strip()]
     _write_raw(raw)
 
 

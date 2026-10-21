@@ -24,6 +24,9 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizeGrip,
+    QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -67,6 +70,13 @@ class TrayQuickWindow(QDialog):
         self._sub_labels: dict[str, QLabel] = {}
         self._sub_widths: dict[str, int] = {}
         self._columns: int = settings_store.get_tray_columns()
+        self._detail_device = None
+        self._sort_mode = False
+        self._restoring_size = True
+        self._size_timer = QTimer(self)
+        self._size_timer.setSingleShot(True)
+        self._size_timer.setInterval(250)
+        self._size_timer.timeout.connect(lambda: settings_store.set_tray_size(self.width(), self.height()))
 
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool |
                             (Qt.CustomizeWindowHint if glass_supported() else Qt.FramelessWindowHint))
@@ -81,7 +91,7 @@ class TrayQuickWindow(QDialog):
         self._root = QFrame(self)
         self._root.setObjectName("trayQuickPanel")
         self._root.setStyleSheet(
-            f"QFrame#trayQuickPanel {{ background: {tint(SiColors.WINDOW_BG, 55) if glass_supported() else SiColors.WINDOW_BG}; border: 1px solid {tint(SiColors.TEXT_PRIMARY, 24)}; border-radius: 22px; }}")
+            f"QFrame#trayQuickPanel {{ background: {SiColors.WINDOW_BG}; border: 1px solid {SiColors.LINE}; border-radius: 16px; }}")
         lay = QVBoxLayout(self._root)
         lay.setContentsMargins(18, 18, 18, 16)
         lay.setSpacing(14)
@@ -89,6 +99,10 @@ class TrayQuickWindow(QDialog):
         # 标题栏：房子（打开主窗口）+ 加号（管理）+ 关闭
         header = QHBoxLayout()
         header.setSpacing(6)
+        upper_grip = QSizeGrip(self)
+        upper_grip.setFixedSize(14, 14)
+        upper_grip.setToolTip("拖动左上角放大小窗")
+        header.addWidget(upper_grip, alignment=Qt.AlignTop | Qt.AlignLeft)
         title = QLabel("米家 · 快捷控制")
         title.setFont(QFont("Microsoft YaHei UI", 11, QFont.Weight.DemiBold))
         title.setStyleSheet(f"color: {SiColors.TEXT_PRIMARY}; background: transparent;")
@@ -157,7 +171,8 @@ class TrayQuickWindow(QDialog):
         self._scroll.setFrameShape(QFrame.NoFrame)
         # 固定高度：可见 4 排卡片（56×4 + 间距6×3），单双列共用同一行高；
         # 窗口按上下栏显隐外扩
-        self._scroll.setFixedHeight(4 * 56 + 3 * 6)
+        self._scroll.setMinimumHeight(120)
+        self._scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._scroll.setStyleSheet(
             "QScrollArea { background: transparent; border: none; }"
             "QScrollBar:vertical { background: transparent; width: 6px; margin: 0 2px 0 0; }"
@@ -172,7 +187,32 @@ class TrayQuickWindow(QDialog):
         self._list_lay.setContentsMargins(0, 0, 6, 0)
         self._list_lay.setSpacing(12)
         self._scroll.setWidget(self._host)
-        lay.addWidget(self._scroll, stretch=1)
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet("QStackedWidget { background: transparent; }")
+        self._stack.addWidget(self._scroll)
+        self._detail_page = QWidget()
+        self._detail_page.setObjectName("trayDetailPage")
+        self._detail_page.setStyleSheet("QWidget#trayDetailPage { background: transparent; }")
+        self._detail_lay = QVBoxLayout(self._detail_page)
+        self._detail_lay.setContentsMargins(0, 0, 0, 0)
+        back = QPushButton("‹ 返回设备")
+        back.setMinimumHeight(30)
+        back.setAutoDefault(False)
+        back.clicked.connect(self._back_to_devices)
+        self._detail_lay.addWidget(back, alignment=Qt.AlignLeft)
+        self._detail_scroll = QScrollArea()
+        self._detail_scroll.setWidgetResizable(True)
+        self._detail_scroll.setFrameShape(QFrame.NoFrame)
+        self._detail_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._detail_scroll.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; }")
+        self._detail_lay.addWidget(self._detail_scroll, 1)
+        self._stack.addWidget(self._detail_page)
+        lay.addWidget(self._stack, stretch=1)
+        from app.ui.tray.quick_sort import QuickSortController
+        self._sorter = QuickSortController(self._host, self._scroll.viewport(), self)
+        self._sorter.order_changed.connect(self._save_quick_order)
 
         self._empty = QLabel("暂无托盘项目\n点击右上角 + 添加")
         self._empty.setAlignment(Qt.AlignCenter)
@@ -183,7 +223,7 @@ class TrayQuickWindow(QDialog):
         # 底部小爱输入条：有小爱音箱才显示，复用主页悬浮球同款交互
         self._voice_frame = QFrame()
         self._voice_frame.setObjectName("voiceInputBar")
-        self._voice_frame.setFixedHeight(36)
+        self._voice_frame.setFixedHeight(48)
         self._voice_frame.setStyleSheet(
             f"QFrame#voiceInputBar {{ background: {SiColors.CARD}; border: 1px solid {SiColors.LINE}; border-radius: 8px; }}")
         voice_lay = QHBoxLayout(self._voice_frame)
@@ -194,6 +234,12 @@ class TrayQuickWindow(QDialog):
         self._voice_edit.installEventFilter(self)
         self._voice_edit.returnPressed.connect(self._emit_voice)
         voice_lay.addWidget(self._voice_edit)
+        from app.ui.microphone_button import MicrophoneButton
+        self._mic = MicrophoneButton(self, compact=True)
+        self._mic.submitted.connect(self._voice_transcript)
+        self._mic.status_changed.connect(self._voice_status)
+        self._mic.failed.connect(lambda message: Toast.info(self, message, 4500))
+        voice_lay.addWidget(self._mic)
         self._voice_frame.hide()
         # 占位打字机与主页悬浮球共用同一实现：常量、节奏、停留
         self._hint_full = "对小爱输入“打开卧室灯”，回车执行"
@@ -201,6 +247,26 @@ class TrayQuickWindow(QDialog):
 
         # 底部输入框：占满宽度
         lay.addWidget(self._voice_frame)
+        footer = QHBoxLayout()
+        self._sort_btn = QPushButton("排列")
+        self._sort_btn.setMinimumSize(48, 28)
+        self._sort_btn.setCheckable(True)
+        self._sort_btn.setAutoDefault(False)
+        self._sort_btn.setToolTip("显示拖动手柄，调整小窗卡片顺序")
+        self._sort_btn.toggled.connect(self._set_sort_mode)
+        footer.addWidget(self._sort_btn)
+        reset = QPushButton("重置大小")
+        reset.setMinimumSize(68, 28)
+        reset.setAutoDefault(False)
+        reset.clicked.connect(self._reset_size)
+        footer.addWidget(reset)
+        self._hint = QLabel("拖角缩放")
+        self._hint.setStyleSheet(f"color: {SiColors.TEXT_SECONDARY}; font-size: 8pt;")
+        footer.addWidget(self._hint, 1)
+        grip = QSizeGrip(self)
+        grip.setToolTip("拖动调整小窗大小")
+        footer.addWidget(grip, alignment=Qt.AlignRight | Qt.AlignBottom)
+        lay.addLayout(footer)
 
         # 音箱音频控制栏：不放在设备卡片内，顶部单独界面
         self._audio_bar = _TrayAudioBar(service, jobs, self)
@@ -210,8 +276,10 @@ class TrayQuickWindow(QDialog):
         self._outer_lay.setSpacing(8)
         self._outer_lay.addWidget(self._audio_bar)
         self._outer_lay.addWidget(self._root)
-        self.resize(300, 380)
-        self.setMinimumSize(280, 360)
+        self.setMinimumSize(340, 360)
+        size = settings_store.get_tray_size() or (400, 650)
+        self.resize(*size)
+        self._restoring_size = False
         self._tray_dids: list[str] = tray_store.load()
         # 场景与统一顺序缓存：呼出时从 tray_store 刷新（见 _rebuild / show_near_tray）
         self._tray_scenes: list[dict] | None = None
@@ -231,6 +299,14 @@ class TrayQuickWindow(QDialog):
             if msg.message == 0x0083 and msg.wParam:  # WM_NCCALCSIZE
                 return True, 0
         return super().nativeEvent(event_type, message)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # QLineEdit already emitted returnPressed. QDialog's implicit default
+        # button would also execute an unrelated audio/scene control here.
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def is_animating(self) -> bool:
         """呼出/隐藏动画是否正在进行。"""
@@ -270,6 +346,8 @@ class TrayQuickWindow(QDialog):
         self._columns = 1 if self._columns == 2 else 2
         settings_store.set_tray_columns(self._columns)
         self._refresh_cols_btn()
+        if self._columns == 2 and self.width() < 700:
+            self.resize(740, self.height())
         self._rebuild()
 
     def set_devices(self, devices: list[DeviceInfo], known_power: dict[str, bool | None]) -> None:
@@ -317,16 +395,10 @@ class TrayQuickWindow(QDialog):
 
     def _update_voice_bar(self) -> None:
         has_speaker = any(is_speaker(d) and d.online for d in self._devices)
-        was_visible = self._voice_frame.isVisible()
         self._voice_frame.setVisible(has_speaker)
-        if has_speaker and self.isVisible():
-            # 仅在由隐藏变显示或尚未启动时才开跑，避免轮询 set_devices 每 5s 重置打字
-            if not was_visible or not self._typewriter.is_active():
-                # 若正处于 1.8s 停留期（timer 已停但占位为全句），不打断
-                if self._voice_edit.placeholderText() != self._hint_full:
-                    self._typewriter.start()
-        else:
-            self._typewriter.stop(clear=True)
+        self._typewriter.stop()
+        if has_speaker and not self._mic.is_listening():
+            self._voice_edit.setPlaceholderText("输入指令，或点击麦克风说话")
         self._sync_tray_height()
 
     def _pick_speaker(self) -> DeviceInfo | None:
@@ -348,33 +420,107 @@ class TrayQuickWindow(QDialog):
         self._sync_tray_height()
 
     def _sync_tray_height(self) -> None:
-        # 确定性计算窗口高度，不依赖 adjustSize（隐藏态会漏算语音条/音频栏）：
-        # 由各固定子控件高度累加，显隐结果一致，呼出前即可得到正确尺寸避免闪烁；
-        # 已显示时外扩并保持底部贴边，避免语音/音频栏显隐挤压卡片
-        audio_h = 0
-        if not self._audio_bar.isHidden():
-            ah = self._audio_bar.sizeHint().height()
-            audio_h = (ah if ah > 0 else 105) + 8  # 外层 spacing
-        voice_h = 36 + 10 if not self._voice_frame.isHidden() else 0  # 36 + 间距10
-        # 根面板：标题 26 + 滚动区 242 + 上间距10 + 下间距10 + 内容边距 24
-        root_h = 28 + self._scroll.height() + 34 + 28
-        h = audio_h + root_h + voice_h
-        from PySide6.QtGui import QGuiApplication
-        screen = QGuiApplication.primaryScreen()
-        if screen is not None:
-            max_h = screen.availableGeometry().height() - 32
-            h = min(h, max_h)
-        h = max(h, self.minimumHeight())
-        if abs(h - self.height()) < 2:
+        # Layout owns the available space. Polling must never overwrite a user's size.
+        if not hasattr(self, "_stack"):
             return
-        if self._tray_visible:
-            old_h = self.height()
-            self.resize(self.width(), h)
-            delta = h - old_h
-            geo = self.geometry()
-            self.move(geo.x(), geo.y() - delta)
-        else:
-            self.resize(self.width(), h)
+        from PySide6.QtGui import QGuiApplication
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            self.setMaximumSize(max(340, area.width() - 24), max(360, area.height() - 24))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_size_timer") and not self._restoring_size and self.isVisible():
+            self._size_timer.start()
+        if hasattr(self, "_grid") and self._grid is not None:
+            self._reflow_grid()
+
+    def _effective_columns(self) -> int:
+        return self._columns if self.width() >= 680 else 1
+
+    def _reflow_grid(self) -> None:
+        grid = self._grid
+        columns = self._effective_columns()
+        if getattr(self, "_layout_columns", None) == columns:
+            return
+        widgets = []
+        while grid.count():
+            item = grid.takeAt(0)
+            if item.widget():
+                widgets.append(item.widget())
+        for column in range(max(2, grid.columnCount())):
+            grid.setColumnStretch(column, int(column < columns))
+        for index, widget in enumerate(widgets):
+            grid.addWidget(widget, index // columns, index % columns)
+        self._layout_columns = columns
+
+    def _reset_size(self) -> None:
+        self.resize(400 if self._columns == 1 else 740, 650)
+        settings_store.set_tray_size(self.width(), self.height())
+
+    def _set_sort_mode(self, enabled: bool) -> None:
+        self._sort_mode = enabled
+        self._sorter.set_enabled(enabled)
+        self._hint.setText("拖柄排序" if enabled else "拖角缩放")
+
+    def _save_quick_order(self, keys: list[str]) -> None:
+        ordered = []
+        for key in keys:
+            kind, ident = key.split(":", 1)
+            ordered.append({"type": kind, "id": ident})
+        # Preserve selected items not currently present in the account snapshot.
+        seen = {(item["type"], item["id"]) for item in ordered}
+        ordered.extend(item for item in self._tray_order or []
+                       if (item["type"], item["id"]) not in seen)
+        self._tray_order = ordered
+        tray_store.save_order(ordered)
+        # Don't destroy a drag source while QDrag.exec is still unwinding.
+        QTimer.singleShot(0, self._rebuild)
+
+    def _back_to_devices(self) -> None:
+        self._stack.setCurrentWidget(self._scroll)
+        self._detail_device = None
+        self._sort_btn.show()
+
+    def _open_inline(self, did: str) -> None:
+        device = next((d for d in self._devices if d.did == did), None)
+        if device is None:
+            return
+        self._detail_device = device
+        self._sort_btn.hide()
+        self._empty.hide()
+        body = QWidget()
+        body.setObjectName("trayDetailBody")
+        body.setStyleSheet("QWidget#trayDetailBody { background: transparent; }")
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        if is_speaker(device):
+            from app.ui.speaker_commands import SpeakerCommands
+            layout.addWidget(SpeakerCommands(self._service, self._jobs, device, body))
+        from app.core.router import is_router
+        if is_router(device):
+            from app.ui.router_panel import RouterPanel
+            layout.addWidget(RouterPanel(self._service, self._jobs, device, body))
+        from app.ui.workbench_panel import WorkbenchPanel
+        panel = WorkbenchPanel(self._service, self._jobs, body)
+        panel.setMinimumHeight(360)
+        layout.addWidget(panel, 1)
+        previous = self._detail_scroll.takeWidget()
+        if previous is not None:
+            previous.deleteLater()
+        self._detail_scroll.setWidget(body)
+        self._stack.setCurrentWidget(self._detail_page)
+        panel.show_device(device.did, online=device.online, device=device)
+
+    def _voice_transcript(self, text: str) -> None:
+        self._voice_edit.setText(text)
+        self._emit_voice()
+
+    def _voice_status(self, message: str) -> None:
+        self._typewriter.stop()
+        self._voice_edit.setPlaceholderText(message)
 
     def _emit_voice(self) -> None:
         text = self._voice_edit.text().strip()
@@ -399,10 +545,13 @@ class TrayQuickWindow(QDialog):
 
     def _on_voice_success(self, text: str, fallback_note: str = "") -> None:
         from app.ui.toast import Toast
+        self._voice_edit.setPlaceholderText(f"已发送：{text}")
+        self._voice_edit.setToolTip(f"已告诉小爱同学：{text}{fallback_note}")
         Toast.info(self, f"已告诉小爱同学：{text}{fallback_note}", 3000)
 
     def _on_voice_error(self, err: Exception) -> None:
         from app.ui.toast import Toast
+        self._voice_edit.setPlaceholderText("执行失败，可修改指令后重试")
         Toast.info(self, f"执行失败：{err}", 4000)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -429,6 +578,8 @@ class TrayQuickWindow(QDialog):
 
         if not shiboken6.isValid(self) or not self.isVisible() or self._show_anim is not None:
             return
+        if self._mic.is_listening():
+            return
         # 只有真正失活且鼠标不在托盘窗口内才隐藏
         if self.isActiveWindow() or self.underMouse():
             return
@@ -436,6 +587,8 @@ class TrayQuickWindow(QDialog):
         # 则不应隐藏托盘——用户只是切到了我方另一个窗口
         from PySide6.QtWidgets import QApplication
         active = QApplication.activeWindow()
+        if QApplication.activePopupWidget() is not None:
+            return
         if active is not None and active is not self:
             # 管理对话框/详情是顶层窗口，主窗口也可能是，需判断是否同属本应用
             top = active.window()
@@ -451,8 +604,11 @@ class TrayQuickWindow(QDialog):
 
     def hideEvent(self, event) -> None:  # noqa: N802
         self._control_timer.stop()
-        for session in self._registry.sessions.values():
-            session.editing = False
+        self._mic.cancel()
+        if self._size_timer.isActive():
+            self._size_timer.stop()
+            settings_store.set_tray_size(self.width(), self.height())
+        self._end_tray_edits()
         self._tray_visible = False
         self._typewriter.stop()
         self._remove_outside_filter()
@@ -529,10 +685,7 @@ class TrayQuickWindow(QDialog):
         from PySide6.QtGui import QGuiApplication
         screen = QGuiApplication.primaryScreen()
         available = screen.availableGeometry() if screen else None
-        width = 350 * self._columns + 30 if has_controls else 300
-        self.resize(min(width, available.width() - 32) if available else width, self.height())
-        viewport = 450 if has_controls else 242
-        self._scroll.setFixedHeight(min(viewport, max(140, available.height() - 220)) if available else viewport)
+        self._sync_tray_height()
         did_set = set(dids)
         scene_map = {s["scene_id"]: SceneInfo(**s) for s in scene_data}
         # 设备与场景按统一排序混排；不在 order 里的（异常文件兜底）追加末尾
@@ -563,7 +716,8 @@ class TrayQuickWindow(QDialog):
         self._empty.hide()
         self._scroll.show()
         # 使用 QGridLayout + setColumnStretch 强制各列等宽，单卡也能保持列宽
-        cols = self._columns
+        cols = self._effective_columns()
+        self._layout_columns = cols
         self._grid = QGridLayout()
         self._grid.setContentsMargins(0, 0, 0, 0)
         for c in range(cols):
@@ -571,7 +725,13 @@ class TrayQuickWindow(QDialog):
         self._grid.setHorizontalSpacing(6)
         self._grid.setVerticalSpacing(6)
         for idx, row in enumerate(rows):
-            self._grid.addWidget(row, idx // cols, idx % cols)
+            kind = "device" if hasattr(row, "_did") else "scene"
+            ident = row._did if kind == "device" else row._scene_id
+            wrapper = self._sorter.wrap_card(f"{kind}:{ident}", row)
+            wrapper._did = getattr(row, "_did", None)
+            wrapper._power_btn = getattr(row, "_power_btn", None)
+            self._grid.addWidget(wrapper, idx // cols, idx % cols)
+        self._sorter.set_enabled(self._sort_mode)
         self._list_lay.addLayout(self._grid)
         self._list_lay.addStretch(1)
         online_dids = [d for d in dids if lookup.get(d) and lookup[d].online and self._known_power.get(d) is None]
@@ -579,6 +739,8 @@ class TrayQuickWindow(QDialog):
             self.refresh_power(online_dids)
 
     def _destroy_grid(self) -> None:
+        self._end_tray_edits()
+        self._sorter.clear()
         grid = getattr(self, "_grid", None)
         if grid is None:
             return
@@ -606,6 +768,14 @@ class TrayQuickWindow(QDialog):
                 self._list_lay.takeAt(i)
                 break
 
+    def _end_tray_edits(self) -> None:
+        from PySide6.QtWidgets import QSlider
+        for card in self._host.findChildren(QuickDeviceCard):
+            for _, control, _ in card._controls.values():
+                if isinstance(control, QSlider) and control.isSliderDown():
+                    control.setSliderDown(False)
+                    card.session.editing = False
+
     def _card_text_width(self, has_power: bool) -> int:
         """卡片文本列的可用宽度（窗口宽固定，各边距确定，可直接算出）。
 
@@ -613,8 +783,9 @@ class TrayQuickWindow(QDialog):
         列宽撑爆、整个网格溢出面板；所有文本都按此宽度省略兜底。
         """
         # 根面板左右边距 28 + 列表右边距 6 + 列间距 6×(cols-1)
-        inner = self.width() - 40 - 6 * (self._columns - 1)
-        col = inner / self._columns
+        columns = self._effective_columns()
+        inner = self.width() - 40 - 6 * (columns - 1)
+        col = inner / columns
         # 卡片左右边距 24 + 文本列与开关间距 10 + 开关按钮 28
         return max(36, round(col - 24 - 10 - (28 if has_power else 0)))
 
@@ -631,7 +802,7 @@ class TrayQuickWindow(QDialog):
     def _make_row(self, dev: DeviceInfo) -> QFrame:
         if supports_quick_controls(dev):
             card = QuickDeviceCard(self._registry.session(dev))
-            card.open_details.connect(self.open_device_requested.emit)
+            card.open_details.connect(self._open_inline)
             return card
         row = QFrame()
         row.setObjectName("trayRow")
@@ -645,6 +816,11 @@ class TrayQuickWindow(QDialog):
         lay = QHBoxLayout(row)
         lay.setContentsMargins(12, 8, 12, 8)
         lay.setSpacing(10)
+
+        symbol = 'mdi.speaker' if is_speaker(dev) else 'mdi.router-wireless' if '.router.' in dev.model else 'mdi.devices'
+        icon = QLabel()
+        icon.setPixmap(qta.icon(symbol, color=SiColors.THEME if dev.online else SiColors.ICON_DIM).pixmap(24, 24))
+        lay.addWidget(icon)
 
         known = self._known_power.get(dev.did)
         avail = self._card_text_width(known is not None)
@@ -694,7 +870,7 @@ class TrayQuickWindow(QDialog):
         row._did = dev.did  # type: ignore[attr-defined]
         row._power_btn = btn  # type: ignore[attr-defined]
 
-        row.mousePressEvent = lambda e, d=dev.did: self.open_device_requested.emit(d) if e.button() == Qt.LeftButton else None
+        row.mousePressEvent = lambda e, d=dev.did: self._open_inline(d) if e.button() == Qt.LeftButton else None
         row.setCursor(Qt.PointingHandCursor)
         return row
 
@@ -801,6 +977,7 @@ class TrayQuickWindow(QDialog):
         self._tray_dids = tray_store.load()
         self._tray_scenes = tray_store.load_scenes()
         self._tray_order = tray_store.load_order()
+        self._back_to_devices()
         self._rebuild()
         self.presence_requested.emit()
         self._refresh_controls()
@@ -936,8 +1113,12 @@ class TrayQuickWindow(QDialog):
         # 等本应用窗口打开时误隐藏托盘
         if self._show_anim is not None or self.isActiveWindow() or self.underMouse():
             return
+        if self._mic.is_listening():
+            return
         from PySide6.QtWidgets import QApplication
         active = QApplication.activeWindow()
+        if QApplication.activePopupWidget() is not None:
+            return
         if active is not None and active is not self:
             top = active.window()
             if top is not None and top is not self:

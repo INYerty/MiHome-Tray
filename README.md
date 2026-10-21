@@ -6,7 +6,7 @@
 
 ## 效果图
 
-以下为程序实际渲染的界面截图，使用隔离的演示设备，未包含真实账号或家庭数据。毛玻璃采用 Windows 11 Acrylic；效果随窗口后方内容和系统透明度设置变化。
+以下为 v0.4.1 程序实际渲染的界面截图，使用隔离的演示设备，未包含真实账号或家庭数据。预览使用主题背景，系统支持时浮窗可使用 Windows 11 Acrylic。
 
 ### 托盘快捷面板
 
@@ -18,7 +18,7 @@
 
 ## 下载与使用
 
-1. 打开 [Releases](https://github.com/INYerty/MiHome-Tray/releases/latest)，下载 `MiHome-Tray-Setup-0.3.2-x64.exe`。
+1. 打开 [Releases](https://github.com/INYerty/MiHome-Tray/releases/latest)，下载其中的 `MiHome-Tray-Setup-版本号-x64.exe`。本地构建的新版位于 `dist`，以该目录的实际版本为准。
 2. 双击安装，随后从开始菜单打开「米家快捷控制」。**无需安装 Python、下载依赖或解压运行目录。**
 3. 用手机米家 App 扫码登录自己的账号。目前面向中国大陆地区账号。
 4. 右键右下角托盘图标 →「管理托盘项目」，添加设备；左键图标打开快捷面板。
@@ -30,6 +30,10 @@
 ## 常用功能
 
 - **系统托盘常驻**：点击图标弹出快捷面板，支持收藏设备、场景和单列/双列布局。
+- **应用内更新**：主菜单或关于页 →「检查更新」→「下载并安装」，自动下载、校验并覆盖安装，完成后重新打开。旧版更新来源曾指向上游，需先手动安装一次 v0.4.2；源码运行环境不执行安装。
+- **完整的小窗操作**：可调整大小，设备子功能在小窗内执行；同一设备的开关、亮度、色温等控件放在同一框组，卡片菜单可逐项选择显示或隐藏。风扇离散档位支持分段滑块。
+- **小爱自定义指令与语音**：每台音箱保存常用指令；点击电脑麦克风识别普通话，再交给支持文本指令的小爱音箱执行。需要 Windows 中文语音组件。
+- **路由器网络概览**：主页详情和小窗都可查看型号公开的实际网速曲线、连接数及网络属性；完整终端列表与属性取决于型号公开的接口，不支持时明确提示。
 - **挂灯控制**：开关、亮度、色温；仅展示设备规格实际发布的能力。
 - **风扇控制**：本体电源、风速、模式及摇头，区分本体与指示灯的同名开关。
 - **顺畅调节**：滑块即时跟随鼠标，松手提交；连续调节使用最新值，回读不会打断拖动。
@@ -64,7 +68,7 @@ cd MiHome-Tray
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-lock.txt
 .\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\python.exe -m pytest tests/test_quick_controls.py -q
+.\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe -m tests.smoke_test
 .\.venv\Scripts\python.exe build_portable.py
 .\.venv\Scripts\python.exe build_installer.py

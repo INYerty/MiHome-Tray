@@ -21,7 +21,7 @@ from app.core import settings_store, tray_store
 from app.core.models import DeviceInfo, SceneInfo
 from app.ui.overlay_dialog import OverlayDialog
 from app.ui.si_theme import SiColors
-from app.ui.tray.draggable_row import _DraggableRow
+from app.ui.tray.draggable_row import TRAY_ORDER_MIME, _DraggableRow
 
 
 class TrayManagerDialog(OverlayDialog):
@@ -154,6 +154,12 @@ class TrayManagerDialog(OverlayDialog):
         sort_scroll.viewport().setAcceptDrops(True)
         self._sort_scroll = sort_scroll
         self._sort_host = sort_host
+        sort_host.installEventFilter(self)
+        sort_scroll.viewport().installEventFilter(self)
+        self._drop_line = QFrame(sort_host)
+        self._drop_line.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._drop_line.setStyleSheet(f"background: {SiColors.THEME}; border-radius: 2px;")
+        self._drop_line.hide()
 
         self._checks: dict[str, QPushButton] = {}
         selected = list(tray_store.load())
@@ -190,7 +196,7 @@ class TrayManagerDialog(OverlayDialog):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setStyleSheet(
                 f"QPushButton {{ background: {SiColors.SURFACE}; border: none; border-radius: 14px; color: {SiColors.TEXT_PRIMARY}; }}"
-                "QPushButton:checked { background: #3dbba4; color: #0b0b0e; }"
+                "QPushButton:checked { background: #ff6900; color: #0b0b0e; }"
                 f"QPushButton:hover {{ background: {SiColors.BTN_HOVER}; }}"
                 "QPushButton:checked:hover { background: #4ccdb5; }")
             self._checks[dev.did] = btn
@@ -223,6 +229,11 @@ class TrayManagerDialog(OverlayDialog):
         super().mousePressEvent(event)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj in (getattr(self, "_sort_host", None),
+                   self._sort_scroll.viewport() if hasattr(self, "_sort_scroll") else None):
+            if event.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.DragLeave, QEvent.Drop):
+                self._handle_sort_drag(obj, event)
+                return True
         # 标题栏拖拽：在 eventFilter 中捕获鼠标事件，子控件（标题/按钮）
         # 的事件也会先经过此处，统一处理窗口移动
         if obj is self._title_bar and event.type() in (
@@ -274,7 +285,7 @@ class TrayManagerDialog(OverlayDialog):
         """行样式：普通态带 hover，拖拽命中态描边高亮。"""
         if highlight:
             return (f"QFrame#trayRow {{ background: {SiColors.CARD_HOVER};"
-                    " border: 2px solid #3dbba4; border-radius: 10px; }")
+                    " border: 2px solid #ff6900; border-radius: 10px; }")
         return (f"QFrame#trayRow {{ background: {SiColors.CARD}; border: 1px solid {SiColors.LINE}; border-radius: 10px; }}"
                 f"QFrame#trayRow:hover {{ background: {SiColors.CARD_HOVER}; }}")
 
@@ -300,7 +311,7 @@ class TrayManagerDialog(OverlayDialog):
 
     def _update_subtitle(self) -> None:
         if self._view == "sort":
-            self._subtitle.setText("长按拖拽调整托盘项目的显示顺序")
+            self._subtitle.setText("拖动项目调整顺序，亮线表示放置位置")
         elif self._tab_scene.isChecked():
             self._subtitle.setText("勾选加入托盘快捷窗口，点击行内按钮可立即执行场景")
         else:
@@ -441,6 +452,7 @@ class TrayManagerDialog(OverlayDialog):
 
     def _on_drag_finish(self) -> None:
         self._drag_did = None
+        self._drop_line.hide()
         self._reset_row_styles()
 
     def _reset_row_styles(self) -> None:
@@ -448,50 +460,66 @@ class TrayManagerDialog(OverlayDialog):
             r.setStyleSheet(self._row_style())
 
     def _sort_drop_pos(self, point):
-        """对话框坐标 → 排序页内容坐标（viewport 外再按 viewport 映射补正）。"""
-        pos = self._sort_host.mapFrom(self, point)
-        if not self._sort_host.rect().contains(pos):
-            vp = self._sort_scroll.viewport()
-            pos = self._sort_host.mapFrom(vp, vp.mapFrom(self, point))
-        return pos
+        """Dialog coordinates to content coordinates, including scroll offset."""
+        return self._sort_host.mapFrom(self, point)
 
-    def dragEnterEvent(self, e) -> None:  # noqa: N802
-        if e.mimeData().hasText() and e.mimeData().text() in self._sort_rows:
-            self._drag_did = e.mimeData().text()
-            e.acceptProposedAction()
-        elif self._drag_did:
-            e.acceptProposedAction()
+    def _handle_sort_drag(self, receiver, event) -> None:
+        if event.type() == QEvent.DragLeave:
+            self._drop_line.hide()
+            event.accept()
+            return
+        mime = event.mimeData()
+        rid = (bytes(mime.data(TRAY_ORDER_MIME)).decode("utf-8", errors="replace")
+               if mime.hasFormat(TRAY_ORDER_MIME) else None)
+        if self._view != "sort" or rid not in self._sort_rows or event.source() is not self._sort_rows[rid]:
+            self._drop_line.hide()
+            event.ignore()
+            return
+        self._drag_did = rid
+        viewport = self._sort_scroll.viewport()
+        viewport_pos = viewport.mapFrom(receiver, event.position().toPoint())
+        if not viewport.rect().contains(viewport_pos):
+            self._drop_line.hide()
+            event.ignore()
+            return
+        pos = self._sort_host.mapFrom(receiver, event.position().toPoint())
+        if event.type() == QEvent.Drop:
+            self._drop_line.hide()
+            self._apply_drop(rid, pos)
+            self._drag_did = None
         else:
-            e.ignore()
+            target_id, after = self._hit_insert(pos)
+            if target_id == rid:
+                self._drop_line.hide()
+            else:
+                if target_id is None:
+                    last_id = self._sort_layout_ids()[-1]
+                    rect = self._sort_rows[last_id].geometry()
+                else:
+                    rect = self._sort_rows[target_id].geometry()
+                y = rect.bottom() + 3 if after else max(0, rect.top() - 4)
+                self._drop_line.setGeometry(rect.left(), y, rect.width(), 3)
+                self._drop_line.show()
+                self._drop_line.raise_()
+            bar = self._sort_scroll.verticalScrollBar()
+            if viewport_pos.y() < 28:
+                bar.setValue(bar.value() - 12)
+            elif viewport_pos.y() > viewport.height() - 28:
+                bar.setValue(bar.value() + 12)
+        event.acceptProposedAction()
 
-    def dragMoveEvent(self, e) -> None:  # noqa: N802
-        if e.mimeData().hasText() and e.mimeData().text() in self._sort_rows:
-            self._drag_did = e.mimeData().text()
-        if not self._drag_did:
-            e.ignore()
-            return
-        pos = self._sort_drop_pos(e.position().toPoint())
-        target_id, _after = self._hit_insert(pos)
-        for rid, row in self._sort_rows.items():
-            if rid == self._drag_did:
-                continue
-            row.setStyleSheet(self._row_style(highlight=rid == target_id))
-        e.acceptProposedAction()
+    def dragEnterEvent(self, event) -> None:  # noqa: N802
+        self._handle_sort_drag(self, event)
 
-    def dragLeaveEvent(self, e) -> None:  # noqa: N802
-        self._reset_row_styles()
-        super().dragLeaveEvent(e)
+    def dragMoveEvent(self, event) -> None:  # noqa: N802
+        self._handle_sort_drag(self, event)
 
-    def dropEvent(self, e) -> None:  # noqa: N802
-        self._reset_row_styles()
-        did_text = e.mimeData().text() if e.mimeData().hasText() else self._drag_did
-        if not did_text or did_text not in self._sort_rows:
-            e.ignore()
-            return
-        self._drag_did = did_text
-        self._apply_drop(did_text, self._sort_drop_pos(e.position().toPoint()))
-        self._drag_did = None
-        e.acceptProposedAction()
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802
+        self._drop_line.hide()
+        event.accept()
+
+    def dropEvent(self, event) -> None:  # noqa: N802
+        self._handle_sort_drag(self, event)
 
     def _hit_insert(self, pos) -> tuple[str | None, bool]:
         """落点目标：返回 (目标行 id, 是否插到目标之后)；id 为 None 表示列表末尾。
@@ -505,7 +533,7 @@ class TrayManagerDialog(OverlayDialog):
             g = row.geometry()
             if pos.y() < g.top():
                 return rid, False
-            if g.top() <= pos.y() < g.bottom():
+            if g.top() <= pos.y() <= g.bottom():
                 return rid, pos.y() > g.center().y()
         return None, True
 
@@ -547,7 +575,7 @@ class TrayManagerDialog(OverlayDialog):
             f"QPushButton {{ background: {SiColors.SURFACE}; border: none; border-radius: 8px;"
             f" padding: 0 18px; color: {SiColors.TEXT_PRIMARY}; font-weight: 600; }}"
             f"QPushButton:hover {{ background: {SiColors.BTN_HOVER}; }}"
-            "QPushButton:checked { background: #3dbba4; color: #0b0b0e; }"
+            "QPushButton:checked { background: #ff6900; color: #0b0b0e; }"
             "QPushButton:checked:hover { background: #4ccdb5; }")
         return btn
 
@@ -688,7 +716,7 @@ class TrayManagerDialog(OverlayDialog):
         btn.setCursor(Qt.PointingHandCursor)
         btn.setStyleSheet(
             f"QPushButton {{ background: {SiColors.SURFACE}; border: none; border-radius: 14px; color: {SiColors.TEXT_PRIMARY}; }}"
-            "QPushButton:checked { background: #3dbba4; color: #0b0b0e; }"
+            "QPushButton:checked { background: #ff6900; color: #0b0b0e; }"
             f"QPushButton:hover {{ background: {SiColors.BTN_HOVER}; }}"
             "QPushButton:checked:hover { background: #4ccdb5; }")
         rl.addWidget(btn)

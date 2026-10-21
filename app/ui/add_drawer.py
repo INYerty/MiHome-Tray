@@ -58,7 +58,7 @@ class ModuleCard(QFrame):
         self._btn.setCursor(Qt.PointingHandCursor)
         self._btn.setStyleSheet(
             f"QPushButton {{ background: {SiColors.SURFACE}; border: none; border-radius: 14px; color: {SiColors.TEXT_PRIMARY}; font-size: 14pt; }}"
-            "QPushButton:hover { background: #3dbba4; }"
+            "QPushButton:hover { background: #ff6900; }"
         )
         self._btn.clicked.connect(self._on_btn_clicked)
         lay.addWidget(self._btn, alignment=Qt.AlignVCenter)
@@ -93,7 +93,7 @@ class ModuleCard(QFrame):
             else:
                 self._btn.setStyleSheet(
                     f"QPushButton {{ background: {SiColors.SURFACE}; border: none; border-radius: 14px; color: {SiColors.TEXT_PRIMARY}; font-size: 14pt; }}"
-                    "QPushButton:hover { background: #3dbba4; color: #fff; }"
+                    "QPushButton:hover { background: #ff6900; color: #fff; }"
                 )
                 self.setStyleSheet("")
             self._title.setStyleSheet(f"color: {SiColors.TEXT_PRIMARY}; background: transparent;")

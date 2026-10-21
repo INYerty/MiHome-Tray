@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from app.ui.smooth_slider import SmoothSlider
+from app.ui.filled_slider import FilledSlider
 
 from app.core.models import PropInfo
 from app.ui.power_button import PowerButton
@@ -44,8 +44,6 @@ _PROP_UNITS: dict[str, str] = {
     "battery-level": "%",
     "power-consumption": "W",
     "electric-power": "W",
-    "download-speed": "MB/s",
-    "upload-speed": "MB/s",
     "rssi": "dBm",
     "online-time": "min",
     "work-countdown-sec": "s",
@@ -146,7 +144,7 @@ def _value_label() -> QLabel:
     return label
 
 
-class _NoWheelSlider(SmoothSlider):
+class _NoWheelSlider(FilledSlider):
     """禁用滚轮调节的滑块：滚轮事件穿透给页面滚动；拇指用 THUMB 调色板色。"""
 
     def wheelEvent(self, event) -> None:  # noqa: N802 (Qt 命名约定)
@@ -289,6 +287,9 @@ class SliderSection(QFrame):
         title_host.setLayout(title_row)
 
         self._slider = _make_slider()
+        name = prop.semantic_name or prop.name
+        self._slider.setColor("#ff9b42" if "temperature" in name or name.endswith("-ct") else
+                              "#25b8b0" if "speed" in name or "fan-level" in name else "#ffbf00")
         self._slider.setRange(0, round((high - low) / self._step))
         self._slider.setPageStep(max(1, self._slider.maximum() // 10))
         # 拖动过程只预览，松手才下发，避免一次拖动连发几十条指令
@@ -539,8 +540,8 @@ class TextRowSection(QFrame):
             editor.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             editor.setStyleSheet(
                 f"QLineEdit {{ background: {SiColors.WINDOW_BG}; border: 1px solid {SiColors.LINE}; border-radius: 8px; "
-                f"padding: 6px 10px; color: {SiColors.TEXT_PRIMARY}; selection-background-color: #3dbba4; font-size: 10pt; }}"
-                "QLineEdit:focus { border-color: #3dbba4; }"
+                f"padding: 6px 10px; color: {SiColors.TEXT_PRIMARY}; selection-background-color: #ff6900; font-size: 10pt; }}"
+                "QLineEdit:focus { border-color: #ff6900; }"
             )
             # 提交仅由"设置"按钮与回车触发；editingFinished 会在失焦时
             # 触发，删除内容后点卡片外部也会误提交，故弃用

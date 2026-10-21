@@ -32,10 +32,10 @@ if TYPE_CHECKING:
 # ----------------------------------------------------------------------------
 # 主题色：米家青绿，两种主题下不变；绿底上的文字同理
 # ----------------------------------------------------------------------------
-THEME = "#3dbba4"
-THEME_HOVER = "#5fd0ba"
-THEME_DIM = "#2a8a7a"
-THEME_CHECKED_HOVER = "#4ccdb5"
+THEME = "#ff6900"
+THEME_HOVER = "#ff8733"
+THEME_DIM = "#c84f00"
+THEME_CHECKED_HOVER = "#ff7e26"
 ON_THEME_TEXT = "#0b0b0e"      # 绿底上的深色文字
 SWITCH_THUMB = "#1C191F"       # 开关滑块深色拇指
 DANGER = "#c0392b"             # 危险红（关闭按钮 hover 等）
@@ -47,22 +47,22 @@ WHITE = "#ffffff"
 # ----------------------------------------------------------------------------
 PALETTES: dict[str, dict[str, str]] = {
     "dark": dict(
-        WINDOW_BG="#1e1f24",
-        TITLE_BAR_BG="#1a1b20",
-        TITLE_BAR_BORDER="#252630",
-        CARD="#2a2c32",
-        CARD_HOVER="#333540",
-        CARD_BORDER_HOVER="#404252",
-        SURFACE="#2e2f36",          # 输入框/小按钮/Toast 底
+        WINDOW_BG="#1c1c1c",
+        TITLE_BAR_BG="#1c1c1c",
+        TITLE_BAR_BORDER="#333333",
+        CARD="#1e1e1e",
+        CARD_HOVER="#252525",
+        CARD_BORDER_HOVER="#505050",
+        SURFACE="#2b2b2b",          # 输入框/小按钮/Toast 底
         SURFACE_PRESSED="#1f1f23",  # 电源钮忙碌底
         PRESSED="#17171a",          # 按下态
         BTN_PRESSED="#25262e",      # 次级按钮按下
         BTN_HOVER="#3a3b44",
-        LINE="#35363f",
-        SCROLLBAR="#35363f",
-        SCROLLBAR_HOVER="#4a4b55",
-        TEXT_PRIMARY="#e8e8ea",
-        TEXT_SECONDARY="#8a8b93",
+        LINE="#353535",
+        SCROLLBAR="#383838",
+        SCROLLBAR_HOVER="#555555",
+        TEXT_PRIMARY="#f4f4f4",
+        TEXT_SECONDARY="#b6b6b6",
         TEXT_MUTED="#7c7d83",
         TEXT_SUBTLE="#9a9aa0",
         TEXT_DISABLED="#555558",
@@ -88,7 +88,7 @@ PALETTES: dict[str, dict[str, str]] = {
         WARN_TEXT="#e8c87a",
     ),
     "light": dict(
-        WINDOW_BG="#f2f3f5",
+        WINDOW_BG="#f5f5f5",
         TITLE_BAR_BG="#ececef",
         TITLE_BAR_BORDER="#dcdfe4",
         CARD="#ffffff",
@@ -193,6 +193,24 @@ _QSS_TEMPLATE = Template("""
 QMainWindow, QDialog, QMessageBox {
     background: $WINDOW_BG;
 }
+
+QPushButton {
+    background: $SURFACE;
+    color: $TEXT_PRIMARY;
+    border: 1px solid $LINE;
+    border-radius: 8px;
+}
+QPushButton:hover { background: $BTN_HOVER; }
+QPushButton:checked { background: $THEME; color: $ON_THEME_TEXT; }
+QPushButton:disabled { color: $TEXT_DISABLED; }
+QLineEdit {
+    background: $SURFACE;
+    color: $TEXT_PRIMARY;
+    border: 1px solid $LINE;
+    border-radius: 8px;
+    padding: 5px 8px;
+}
+QLineEdit:focus { border-color: $THEME; }
 
 QWidget#contentHost, QWidget#gridHost {
     background: $WINDOW_BG;
@@ -423,7 +441,7 @@ def build_qss() -> str:
     values.update(
         THEME=THEME, THEME_HOVER=THEME_HOVER, THEME_DIM=THEME_DIM,
         THEME_CHECKED_HOVER=THEME_CHECKED_HOVER,
-        DANGER=DANGER, WHITE=WHITE,
+        DANGER=DANGER, WHITE=WHITE, ON_THEME_TEXT=ON_THEME_TEXT,
     )
     # 缺键早失败：模板新增占位符而某套调色板漏配时给出可读报错
     missing = set(_QSS_TEMPLATE.get_identifiers()) - set(values)

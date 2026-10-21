@@ -6,22 +6,30 @@
 内部装 prop_widgets 的原生卡片，对外仍暴露 prop 供刷新链路复用。
 """
 
-from PySide6.QtCore import QMimeData, Qt, Signal
+import shiboken6
+
+from PySide6.QtCore import QEvent, QMimeData, Qt, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import QApplication, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from app.ui.si_theme import SiColors
 
 
+WORKBENCH_MIME = "application/x-mihome-workbench-key"
+
+
 class WorkbenchItemWrapper(QFrame):
+    drag_finished = Signal()
     request_delete = Signal(str)  # key
     request_move = Signal(str, int)  # key, direction (+1/-1)
 
     def __init__(self, key: str, inner: QWidget, parent=None):
         super().__init__(parent)
         self.key = key
+        self._mode = "normal"
+        self._drag_start = None
         self.inner = inner
         # 卡片尺寸对齐添加抽屉的 ModuleCard，保持网格统一样式；88 高度避免文字底被裁切
-        self._base_height = 88
+        self._base_height = 112 if hasattr(inner, "_slider") else 88
         self.setFixedHeight(self._base_height)
         from PySide6.QtWidgets import QSizePolicy as _SP
         self.setSizePolicy(_SP.Expanding, _SP.Fixed)
@@ -81,7 +89,7 @@ class WorkbenchItemWrapper(QFrame):
                         cl.setContentsMargins(12, 6, 12, 6)
                         cl.setSpacing(4)
                     if hasattr(child, "_slider"):
-                        child._slider.setFixedHeight(28)
+                        child._slider.setFixedHeight(42)
                         child._slider.style_data.thumb_width = 18
                         child._slider.style_data.thumb_height = 18
                         child._slider.update()
@@ -110,7 +118,9 @@ class WorkbenchItemWrapper(QFrame):
         self._handle.setStyleSheet(f"color: {SiColors.ICON_DIM}; font-size: 11pt; background: transparent;")
         self._handle.setToolTip("拖动排序")
         self._handle.setCursor(Qt.OpenHandCursor)
-        self._handle.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._handle.setMinimumWidth(32)
+        self._handle.setAlignment(Qt.AlignCenter)
+        self._handle.installEventFilter(self)
         bar_lay.addWidget(self._handle)
         bar_lay.addStretch(1)
         self._up_btn = QPushButton("↑")
@@ -146,46 +156,51 @@ class WorkbenchItemWrapper(QFrame):
         self._mode = "normal"
         self._drag_start = None
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if self._mode == "manage" and event.button() == Qt.LeftButton:
-            # 仅按住手柄区域才启动拖拽，避免与滑块冲突
-            if self._bar.geometry().contains(event.pos()) and self._handle.geometry().contains(
-                self._bar.mapFromParent(event.pos())
-            ):
-                self._drag_start = event.pos()
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        # Capture the actual handle, whose child events otherwise never reach the frame.
+        if watched is self._handle and self._mode == "manage":
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._drag_start = self._handle.mapTo(self, event.position().toPoint())
                 self._handle.setCursor(Qt.ClosedHandCursor)
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._mode == "manage" and self._drag_start is not None and event.buttons() & Qt.LeftButton:
-            if (event.pos() - self._drag_start).manhattanLength() > QApplication.startDragDistance():
-                # 隐藏原位置，仅显示拖拽图标
-                pix = self.grab()
-                eff = QGraphicsOpacityEffect(self)
-                eff.setOpacity(0.0)
-                self.setGraphicsEffect(eff)
-                drag = QDrag(self)
-                mime = QMimeData()
-                mime.setText(self.key)
-                drag.setMimeData(mime)
-                drag.setPixmap(pix)
-                drag.setHotSpot(event.pos())
-                drag.exec(Qt.MoveAction)
-                self.setGraphicsEffect(None)
+                return True
+            if event.type() == QEvent.MouseMove and self._drag_start is not None:
+                if event.buttons() & Qt.LeftButton:
+                    point = self._handle.mapTo(self, event.position().toPoint())
+                    if (point - self._drag_start).manhattanLength() >= QApplication.startDragDistance():
+                        self._start_drag()
+                return True
+            if event.type() == QEvent.MouseButtonRelease:
                 self._drag_start = None
                 self._handle.setCursor(Qt.OpenHandCursor)
-                return
-        super().mouseMoveEvent(event)
+                return True
+        return super().eventFilter(watched, event)
 
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+    def _start_drag(self) -> None:
+        pix = self.grab()
+        origin = self._drag_start
         self._drag_start = None
-        if hasattr(self, "_handle"):
-            self._handle.setCursor(Qt.OpenHandCursor)
-        super().mouseReleaseEvent(event)
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.25)
+        self.setGraphicsEffect(effect)
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData(WORKBENCH_MIME, self.key.encode("utf-8"))
+        mime.setText(self.key)
+        drag.setMimeData(mime)
+        drag.setPixmap(pix)
+        drag.setHotSpot(origin)
+        try:
+            drag.exec(Qt.MoveAction)
+        finally:
+            if shiboken6.isValid(self):
+                self.setGraphicsEffect(None)
+                self._handle.setCursor(Qt.OpenHandCursor)
+                self.drag_finished.emit()
 
     def set_mode(self, mode: str) -> None:
         """normal / manage（同时显示移动与删除）"""
         self._mode = mode
+        self._drag_start = None
         if self._is_enum or self._is_group:
             # 枚举/组合卡片高度自适应，不固定
             if mode == "normal":

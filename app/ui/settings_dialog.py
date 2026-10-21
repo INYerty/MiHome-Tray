@@ -260,8 +260,15 @@ class SettingsDialog(OverlayDialog):
         _sync_switch(self._scene_toggle)
         scene_row.addWidget(self._scene_toggle)
 
+        self._ambient_item, self._ambient_label, self._ambient_desc, ambient_row = self._make_item(
+            "背景光效", "轻柔的渐变光晕缓慢移动；关闭后使用静态纯色背景")
+        self._ambient_toggle = themed_switch()
+        self._ambient_toggle.setChecked(settings_store.get_ambient_enabled())
+        _sync_switch(self._ambient_toggle)
+        ambient_row.addWidget(self._ambient_toggle)
+
         return self._build_scroll([
-            self._theme_item, self._scale_item, self._fab_item, self._scene_item,
+            self._theme_item, self._scale_item, self._ambient_item, self._fab_item, self._scene_item,
         ])
 
     def _build_features_page(self) -> QScrollArea:
@@ -343,8 +350,7 @@ class SettingsDialog(OverlayDialog):
         # ── 自动检测新版本 ──
         self._update_item, self._update_label, self._update_desc, update_row = self._make_item(
             "自动检测新版本",
-            "开启时，会在每次启动应用时自动从 Github 仓库获取新版本信息，"
-            "有则提示更新")
+            "启动时检查米家快捷控制的新版本；发现新版后，可在软件内下载并安装")
         self._update_toggle = themed_switch()
         self._update_toggle.setChecked(settings_store.get_check_update_enabled())
         _sync_switch(self._update_toggle)
@@ -408,7 +414,7 @@ class SettingsDialog(OverlayDialog):
         for item in (self._tray_item, self._start_min_item, self._fab_item,
                      self._scene_item, self._theme_item, self._autostart_item,
                      self._speaker_item, self._hide_item, self._scale_item,
-                     self._update_item):
+                     self._update_item, self._ambient_item):
             item.setStyleSheet(panel_card)
             # 高度按内容自适应（不固定）：长描述换行后行自然变高，
             # 不会被固定 64px 裁掉；短描述保持紧凑。QScrollArea 负责
@@ -419,13 +425,13 @@ class SettingsDialog(OverlayDialog):
         for label in (self._tray_label, self._start_min_label, self._fab_label,
                       self._scene_label, self._theme_label, self._autostart_label,
                       self._speaker_label, self._hide_label, self._scale_label,
-                      self._update_label):
+                      self._update_label, self._ambient_label):
             label.setStyleSheet(
                 f"color: {SiColors.TEXT_PRIMARY}; background: transparent; font-size: 10pt;")
         for desc in (self._tray_desc, self._start_min_desc, self._fab_desc,
                      self._scene_desc, self._theme_desc, self._autostart_desc,
                      self._speaker_desc, self._hide_desc, self._scale_desc,
-                     self._update_desc):
+                     self._update_desc, self._ambient_desc):
             desc.setStyleSheet(
                 f"color: {SiColors.TEXT_SECONDARY}; background: transparent; font-size: 7pt;")
         self._done_btn.setStyleSheet(
@@ -533,6 +539,10 @@ class SettingsDialog(OverlayDialog):
         combo.blockSignals(False)
 
     def _save_and_accept(self) -> None:
+        settings_store.set_ambient_enabled(self._ambient_toggle.isChecked())
+        win = self.parent()
+        if hasattr(win, "centralWidget") and hasattr(win.centralWidget(), "sync_effects"):
+            win.centralWidget().sync_effects()
         settings_store.set_minimize_to_tray(self._tray_toggle.isChecked())
         # 子开关仅在父开关开启时有效，关闭时强制写入 False
         if self._tray_toggle.isChecked():
