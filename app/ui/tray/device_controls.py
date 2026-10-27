@@ -66,7 +66,9 @@ class QuickDeviceCard(QFrame):
         icon.setFixedSize(36, 36)
         icon.setAlignment(Qt.AlignCenter)
         icon.setStyleSheet(f"background: {tint(self._accent, 48)}; border-radius: 18px;")
-        icon.setPixmap(qta.icon('mdi.fan' if self._accent != "#ffbf00" else 'mdi.lightbulb', color=self._accent).pixmap(23, 23))
+        is_switch = ".switch." in session.device.model or ":switch:" in session.device.spec_type
+        symbol = "mdi.lightbulb" if self._accent == "#ffbf00" else "mdi.toggle-switch" if is_switch else "mdi.fan"
+        icon.setPixmap(qta.icon(symbol, color=self._accent).pixmap(23, 23))
         header.addWidget(icon)
         title = QVBoxLayout()
         title.setSpacing(1)

@@ -563,7 +563,7 @@ class MijiaService:
                       if p.get("type") == "bool" and "w" in p.get("rw", "")
                       and (p.get("semantic_name") == "on" or p["name"] == "on"
                            or p["name"].replace("_", "-").startswith("on-"))]
-        primary = [p for p in candidates if p.get("service_name") in ("fan", "light")]
+        primary = [p for p in candidates if p.get("service_name") in ("fan", "light", "switch")]
         if len(primary) == 1:
             return primary[0]["method"]
         # Flattened names can identify multiple unrelated switches. Without

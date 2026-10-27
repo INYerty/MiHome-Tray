@@ -11,8 +11,8 @@ from app.core.models import DeviceInfo, PropInfo
 
 
 def supports_quick_controls(device: DeviceInfo) -> bool:
-    return any(part in device.model for part in (".light.", ".fan.")) or any(
-        part in device.spec_type for part in (":light:", ":fan:")
+    return any(part in device.model for part in (".light.", ".fan.", ".switch.")) or any(
+        part in device.spec_type for part in (":light:", ":fan:", ":switch:")
     )
 
 
@@ -25,13 +25,18 @@ def select_quick_props(props: list[PropInfo]) -> list[PropInfo]:
         ("horizontal-swing", "swing-mode", "oscillate"),
         ("vertical-swing",),
     )
+    switch_power = [p for p in props if p.readable and p.writable and p.type == "bool"
+                    and p.service_name == "switch"
+                    and (p.semantic_name or p.name.replace("_", "-")) == "on"]
     by_name = {}
     for prop in props:
         if not prop.readable or not prop.writable:
             continue
-        if prop.service_name and prop.service_name not in ("light", "fan"):
+        if prop.service_name and prop.service_name not in ("light", "fan", "switch"):
             continue
         name = prop.semantic_name or prop.name.replace("_", "-")
+        if prop.service_name == "switch" and (len(switch_power) != 1 or prop is not switch_power[0]):
+            continue  # Only expose an unambiguous relay, never wireless-mode settings.
         if name == "brightness" and prop.type == "bool":
             continue  # a fan's indicator LED is not light brightness
         if name in ("mode", "wind-mode") and prop.service_name == "light":
